@@ -46,6 +46,7 @@ add_library(xtdb_core
     src/raw_scanner.cpp
     src/block_reader.cpp
     src/metadata_sync.cpp
+    src/storage_engine.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -165,8 +166,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME EndToEndTest COMMAND test_end_to_end)
 
+    # Test: Restart Consistency (T10)
+    add_executable(test_restart_consistency
+        tests/test_restart_consistency.cpp
+    )
+    target_link_libraries(test_restart_consistency
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME RestartConsistencyTest COMMAND test_restart_consistency)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency")
 endif()
 
 # ============================================================================

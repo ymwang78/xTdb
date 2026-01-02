@@ -1,0 +1,157 @@
+#ifndef XTDB_STORAGE_ENGINE_H_
+#define XTDB_STORAGE_ENGINE_H_
+
+#include "aligned_io.h"
+#include "metadata_sync.h"
+#include "mem_buffer.h"
+#include "block_writer.h"
+#include "directory_builder.h"
+#include "chunk_sealer.h"
+#include "raw_scanner.h"
+#include "block_reader.h"
+#include "state_mutator.h"
+#include "struct_defs.h"
+#include <string>
+#include <vector>
+#include <memory>
+#include <unordered_map>
+
+namespace xtdb {
+
+// ============================================================================
+// Storage Engine - Global entry point for xTdb
+// ============================================================================
+
+/// Engine result codes
+enum class EngineResult {
+    SUCCESS = 0,
+    ERROR_INVALID_PATH,
+    ERROR_CONTAINER_OPEN_FAILED,
+    ERROR_CONTAINER_HEADER_INVALID,
+    ERROR_METADATA_OPEN_FAILED,
+    ERROR_WAL_OPEN_FAILED,
+    ERROR_CHUNK_ALLOCATION_FAILED,
+    ERROR_STATE_RESTORATION_FAILED,
+    ERROR_WAL_REPLAY_FAILED,
+    ERROR_ENGINE_NOT_OPEN,
+    ERROR_INVALID_DATA
+};
+
+/// Container information
+struct ContainerInfo {
+    uint32_t container_id;
+    std::string file_path;
+    uint64_t capacity_bytes;
+    ChunkLayout layout;
+};
+
+/// Active chunk tracking
+struct ActiveChunkInfo {
+    uint32_t chunk_id;
+    uint64_t chunk_offset;
+    uint32_t blocks_used;    // Number of blocks currently written
+    uint32_t blocks_total;   // Total data blocks available
+    int64_t start_ts_us;
+    int64_t end_ts_us;
+};
+
+/// Storage Engine configuration
+struct EngineConfig {
+    std::string data_dir;
+    std::string db_path;
+    ChunkLayout layout;
+
+    EngineConfig()
+        : data_dir("./data"),
+          db_path("./data/meta.db") {
+        // Default layout: 16KB blocks, 256MB chunk
+        layout.block_size_bytes = 16384;
+        layout.chunk_size_bytes = 256 * 1024 * 1024;
+        layout.meta_blocks = 0;  // Will be calculated
+        layout.data_blocks = 0;  // Will be calculated
+    }
+};
+
+/// Storage Engine - manages all global state and coordinates operations
+class StorageEngine {
+public:
+    /// Constructor
+    explicit StorageEngine(const EngineConfig& config);
+
+    /// Destructor
+    ~StorageEngine();
+
+    // Disable copy and move
+    StorageEngine(const StorageEngine&) = delete;
+    StorageEngine& operator=(const StorageEngine&) = delete;
+    StorageEngine(StorageEngine&&) = delete;
+    StorageEngine& operator=(StorageEngine&&) = delete;
+
+    /// Open storage engine and perform bootstrap sequence
+    /// @return EngineResult
+    EngineResult open();
+
+    /// Close storage engine
+    void close();
+
+    /// Check if engine is open
+    bool isOpen() const { return is_open_; }
+
+    /// Get last error message
+    const std::string& getLastError() const { return last_error_; }
+
+    /// Get container information
+    const std::vector<ContainerInfo>& getContainers() const { return containers_; }
+
+    /// Get active chunk info (for testing/monitoring)
+    const ActiveChunkInfo& getActiveChunk() const { return active_chunk_; }
+
+    /// Get metadata sync (for testing)
+    MetadataSync* getMetadataSync() { return metadata_.get(); }
+
+private:
+    /// Bootstrap step 1: Connect to SQLite
+    EngineResult connectMetadata();
+
+    /// Bootstrap step 2: Mount container files
+    EngineResult mountContainers();
+
+    /// Bootstrap step 3: Restore active state
+    EngineResult restoreActiveState();
+
+    /// Bootstrap step 4: Replay WAL
+    EngineResult replayWAL();
+
+    /// Verify container header
+    /// @param container_path Path to container file
+    /// @param header Output: container header
+    /// @return EngineResult
+    EngineResult verifyContainerHeader(const std::string& container_path,
+                                      ContainerHeaderV12& header);
+
+    /// Allocate new chunk (initialize header and directory)
+    /// @param chunk_offset Chunk offset in container
+    /// @return EngineResult
+    EngineResult allocateNewChunk(uint64_t chunk_offset);
+
+    /// Set error message
+    void setError(const std::string& message);
+
+    EngineConfig config_;
+    bool is_open_;
+    std::string last_error_;
+
+    // Core components
+    std::unique_ptr<AlignedIO> io_;              // File I/O
+    std::unique_ptr<MetadataSync> metadata_;     // SQLite connection
+    std::unique_ptr<StateMutator> mutator_;      // State machine
+
+    // Runtime state
+    std::vector<ContainerInfo> containers_;      // All mounted containers
+    ActiveChunkInfo active_chunk_;               // Current active chunk
+    std::unordered_map<uint32_t, TagBuffer> buffers_;  // Tag -> MemBuffer
+};
+
+}  // namespace xtdb
+
+#endif  // XTDB_STORAGE_ENGINE_H_
