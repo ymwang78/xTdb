@@ -189,6 +189,168 @@
 * 建议为这个计算逻辑编写极其详尽的边界测试（Boundary Tests）。
 
 
+既然这 6 个底层基石（物理IO、头部定义、WAL写路径、目录Seal、读取恢复、SQLite集成）已经全部就绪，那么**恭喜你**。你现在拥有的是一堆精密的“零部件”，接下来的工作就是**组装发动机（Engine Assembly）**。
 
-**您想从哪里开始？**
-我们可以先实现 **Phase 1 (AlignedIO & LayoutCalculator)**，因为这是整个 V1.6 设计的物理基石。如果您同意，我可以为您生成这部分的 C++ (或 Go/Rust) 代码骨架。
+是的，我们现在进入**“系统编排与服务化”**阶段。
+
+我们需要构建一个全局单例 —— `StorageEngine`，它负责启动时的上下文恢复、运行时的流量调度，以及对外暴露 API。
+
+基于 V1.6 设计，我为你规划了接下来的**全系统集成路径（System Integration Path）**，从内部初始化开始，直到 API 暴露。
+
+---
+
+### 阶段 7：全局初始化与启动 (The Bootstrap Sequence)
+
+**核心任务**：将磁盘上静止的 Container 文件、SQLite 索引和 WAL 日志，在内存中构建出完整的“运行时状态”。
+
+#### 7.1 核心类：`StorageEngine`
+
+这个类是系统的入口，持有所有全局对象：
+
+* `ContainerManager`：管理所有打开的文件句柄。
+* `MetadataStore`：SQLite 连接句柄。
+* `WriteBufferManager`：内存中的 MemTable 集合。
+
+#### 7.2 启动流程 (Bootstrap Logic)
+
+你需要编写 `StorageEngine::Open(data_dir)`，执行以下严格顺序：
+
+1. **SQLite 连接**：打开 `meta.db`，确保 Tables（`containers`, `chunks`, `blocks_xxx`）存在。
+2. **Container 挂载 (Mounting)**：
+* 扫描 `data_dir` 下的所有 Container 文件。
+* 读取每个 ContainerHeader，校验 Magic 和 Version。
+* **关键检查**：验证文件实际大小是否 >= Header 中记录的 capacity（防止截断）。
+* 将其注册到 `ContainerManager`，建立 `ContainerID -> FileDescriptor` 的映射。
+
+
+3. **活跃状态恢复 (State Restoration)**：
+* 查询 SQLite，找到所有状态为 `ACTIVE` 的 Chunk。
+* 加载这些 Chunk 的元数据到内存（为了快速判断是否已满）。
+
+
+4. **WAL 重放 (WAL Replay)**：
+* **这是数据一致性的关键**。
+* 读取 WAL 文件，将其中“已写入 WAL 但未 Flush 到 Data Block”的数据，重新插入到 `WriteBufferManager`（内存表）中。
+* *注意*：重放过程中不产生新的 WAL。
+
+
+
+#### 7.3 测试点
+
+* **T10-RestartConsistency**：写入数据 -> 强杀进程（不 Flush） -> 重启。验证：WAL 重放是否让数据“复活”了。
+
+---
+
+### 阶段 8：写路径编排 (The Write Coordinator)
+
+**核心任务**：实现 `Write(Tag, Timestamp, Value)` 的全局路由逻辑，决定数据去哪个 Container，哪个 Chunk，是否需要切块。
+
+#### 8.1 逻辑实现
+
+在 `StorageEngine::WritePoints` 中实现以下流水线：
+
+1. **WAL Append**：先写日志，落盘（或缓冲）成功后才继续。
+2. **Buffer 路由**：根据 TagID 找到对应的内存 Buffer。
+3. **Buffer 写入与阈值检查**：
+* 将点写入内存。
+* **Check**：如果 Buffer 大小 >= 16KB (Block Size)：
+* 触发 **Flush Task**（异步提交给后台线程池）。
+
+
+
+
+4. **Flush Task (后台线程)**：
+* 从 `ContainerManager` 获取当前的 Active Chunk。
+* **Roll Logic (切块逻辑)**：
+* 如果当前 Chunk 已满（达到 `data_blocks` 上限） OR 时间跨度过大：
+* 调用 `ChunkSealer` 封存当前 Chunk（更新 Header/Directory，写入 SQLite）。
+* 分配新 Chunk（在 SQLite 插入记录，更新 Header 为 Active）。
+
+
+
+
+* 调用 `BlockWriter` 将 16KB 数据落盘。
+* *注意*：此时 **不** 更新目录（Directory），只写 Data Block。
+
+
+
+#### 8.2 测试点
+
+* **T11-AutoRolling**：持续高速写入，观察日志。验证：Chunk 是否在写满后自动切换？SQLite 中是否生成了新的 chunk 记录？
+
+---
+
+### 阶段 9：读路径编排 (The Read Coordinator)
+
+**核心任务**：解析查询 -> 查索引 -> 查数据 -> 聚合。
+
+#### 9.1 逻辑实现
+
+1. **Query Planner**：
+* 输入：`SELECT avg(val) WHERE tag=A AND time > T1 AND time < T2`
+* 步骤 1：查 SQLite `blocks` 表，获取符合 `tag=A` 且时间范围重叠的 `(ContainerID, ChunkID, BlockIndex)` 列表。
+* 步骤 2：检查 `WriteBufferManager`（内存表），看是否有 T1~T2 范围内的未落盘数据。
+
+
+2. **Executor**：
+* 对于磁盘块：调用 `BlockReader` 并行读取、解压。
+* 对于内存数据：直接从 MemTable 读取。
+
+
+3. **Aggregator**：
+* 归并排序（Merge Sort）磁盘流和内存流。
+* 计算 `avg`。
+
+
+
+#### 9.2 测试点
+
+* **T12-HybridRead**：写入数据，一部分已刷盘（在 Block 中），一部分刚写入（在 WAL/内存中）。查询跨越这两个部分，验证结果是否包含所有数据。
+
+---
+
+### 阶段 10：后台服务 (Maintenance Services)
+
+**核心任务**：让系统长期稳定运行。
+
+#### 10.1 关键服务
+
+* **Directory Syncer (目录同步器)**：
+* V1.6 设计要求“低频更新目录”。
+* 你需要一个定时任务（比如每 10 秒），扫描所有已写入 Data Block 但未更新 Directory 的 Active Chunk。
+* 批量将 `BlockDirEntry` 写入 Chunk 的 Meta Region。
+
+
+* **Retention Service (过期清理)**：
+* 定时查 SQLite，找出 `end_time < (Now - Retention)` 的 Chunk。
+* 执行 V1.6 的回收流程：`DEPRECATED` -> 删除 SQLite 记录 -> `FREE` (Trim/Punch Hole)。
+
+
+
+---
+
+### 阶段 11：对外 API 接口 (Public Interface)
+
+**核心任务**：定义用户与系统交互的协议。
+
+#### 11.1 API 列表 (C++ Header / gRPC Proto)
+
+参考 xts_api.template.h
+
+---
+
+### 总结与执行建议
+
+从**局部**到**全局**的转换，最大的痛点在于**状态管理**。
+
+**我的建议是：**
+
+1. **先做“只写不读”的启动**：
+先实现 `Bootstrap` 和 `Write Coordinator`。目标是：程序启动 -> 加载 -> 疯狂写入 -> 自动切 Chunk -> 正常关闭。
+然后检查磁盘文件和 SQLite，如果它们是完美的，说明你的“心脏”跳动正常。
+2. **再做读取**：
+一旦数据能稳定落盘，实现读取逻辑通常比较快。
+3. **最后做 API**：
+API 只是对 `StorageEngine` 方法的简单包装。
+
+**您想先看 `StorageEngine::Open` (Bootstrap) 的伪代码逻辑，还是 `Write Coordinator` 中处理 Chunk 切换（Roll）的详细流程？这两个是最容易出错的地方。**
