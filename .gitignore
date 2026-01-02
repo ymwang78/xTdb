@@ -1,0 +1,95 @@
+# C++ 构建文件
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# CMake 构建目录
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Qt 特定文件
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qm
+*.qmlc
+*.jsc
+
+# Qt Creator
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.pro.user.*.autosave
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 编译器特定文件
+*.gch
+*.pch
+*.dSYM/
+*.suo
+*.user
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
+
+# 调试文件
+*.pdb
+*.ilk
+*.exp
+*.map
+
+# 临时文件
+*.tmp
+*.temp
+*.log
+*.bak
+*.backup
+
+# 依赖管理
+vcpkg_installed/
+conan/
+conanfile.txt.lock
+
+# 文档生成
+docs/_build/
+docs/html/
+docs/latex/
+
+# 测试文件
+test_results/
+coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# 资源文件（如果需要忽略某些资源）
+# resources/temp/
+# resources/cache/
+
+# 项目特定文件
+# 根据项目需要添加特定的忽略规则 
