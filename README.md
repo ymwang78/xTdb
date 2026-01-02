@@ -9,7 +9,12 @@
 - LayoutCalculator（偏移量计算）
 - 22个单元测试全部通过
 
-🔄 **进行中**：阶段2 - 头部定义与状态机
+✅ **阶段2完成**：头部定义与状态机
+- ContainerHeader / RawChunkHeader / BlockDirEntry 结构体定义
+- StateMutator（Active-low 状态机，SSD 友好）
+- 25个单元测试全部通过
+
+🔄 **进行中**：阶段3 - 写入路径（WAL + BlockWriter）
 
 ## 核心特性
 
@@ -62,11 +67,16 @@ cd build
 ```
 Test project /home/admin/cxxproj/xTdb/build
     Start 1: AlignmentTest
-1/2 Test #1: AlignmentTest ....................   Passed    0.12 sec
+1/4 Test #1: AlignmentTest ....................   Passed    0.12 sec
     Start 2: LayoutTest
-2/2 Test #2: LayoutTest .......................   Passed    0.00 sec
+2/4 Test #2: LayoutTest .......................   Passed    0.00 sec
+    Start 3: StructSizeTest
+3/4 Test #3: StructSizeTest ...................   Passed    0.00 sec
+    Start 4: StateMachineTest
+4/4 Test #4: StateMachineTest .................   Passed    0.01 sec
 
-100% tests passed, 0 tests failed out of 2
+100% tests passed, 0 tests failed out of 4
+Total Test time (real) =   0.13 sec
 ```
 
 ## API 使用示例
@@ -118,6 +128,39 @@ uint64_t offset = LayoutCalculator::calculateBlockOffset(
 std::cout << "Block offset: " << offset << " bytes" << std::endl;
 ```
 
+### 3. StateMutator - 状态机操作
+
+```cpp
+#include "xTdb/state_mutator.h"
+using namespace xtdb;
+
+// 打开文件
+AlignedIO io;
+io.open("/path/to/data.db", true, false);
+
+// 创建状态机
+StateMutator mutator(&io);
+
+// 初始化 chunk header
+RawChunkHeaderV16 header;
+header.chunk_id = 0;
+header.chunk_size_extents = kDefaultChunkSizeExtents;
+header.block_size_extents = getBlockSizeExtents(RawBlockClass::RAW_16K);
+mutator.initChunkHeader(0, header);
+
+// Chunk 生命周期操作
+mutator.allocateChunk(0);                           // FREE → ALLOCATED
+mutator.sealChunk(0, 1000000, 2000000, 0x12345678); // ALLOCATED → SEALED
+mutator.deprecateChunk(0);                          // SEALED → DEPRECATED
+
+// Block 操作
+BlockDirEntryV16 entry;
+entry.tag_id = 100;
+entry.start_ts_us = 1000000;
+mutator.initBlockDirEntry(128, entry);              // 初始化
+mutator.sealBlock(128, 2000000, 1000, 0xABCDEF12);  // 封存
+```
+
 ## 项目结构
 
 ```
@@ -125,17 +168,23 @@ xTdb/
 ├── include/xTdb/          # 头文件
 │   ├── constants.h
 │   ├── aligned_io.h
-│   └── layout_calculator.h
+│   ├── layout_calculator.h
+│   ├── struct_defs.h      # ✨ 阶段2：结构体定义
+│   └── state_mutator.h    # ✨ 阶段2：状态机
 ├── src/                   # 源文件
 │   ├── aligned_io.cpp
-│   └── layout_calculator.cpp
+│   ├── layout_calculator.cpp
+│   └── state_mutator.cpp  # ✨ 阶段2
 ├── tests/                 # 测试文件
 │   ├── test_alignment.cpp
-│   └── test_layout.cpp
+│   ├── test_layout.cpp
+│   ├── test_struct_size.cpp    # ✨ 阶段2：T3
+│   └── test_state_machine.cpp  # ✨ 阶段2：T4
 ├── docs/                  # 文档
 │   ├── design.md          # V1.6 设计文档
 │   ├── plan.md            # 实施计划
-│   └── phase1_summary.md  # 阶段1总结
+│   ├── phase1_summary.md  # 阶段1总结
+│   └── phase2_summary.md  # ✨ 阶段2总结
 ├── build/                 # 构建输出（自动生成）
 ├── CMakeLists.txt         # CMake 配置
 ├── build.sh               # 构建脚本
@@ -158,6 +207,22 @@ xTdb/
 - ✅ Meta/Data Region 偏移
 - ✅ 边界条件与异常处理
 - ✅ Extent 对齐辅助函数
+
+### T3-StructSizeTest（13个测试）
+- ✅ ContainerHeader = 16KB
+- ✅ RawChunkHeader = 128 bytes
+- ✅ BlockDirEntry = 48 bytes
+- ✅ Field offsets 验证
+- ✅ 初始化验证（flags=0xFFFFFFFF）
+- ✅ State bit helpers
+
+### T4-StateMachineTest（12个测试）
+- ✅ Chunk header 初始化
+- ✅ Chunk 生命周期（FREE→ALLOCATED→SEALED→DEPRECATED）
+- ✅ Block 封存操作
+- ✅ 状态位断言（monotonic time, no gaps）
+- ✅ 防止重复操作
+- ✅ 多 chunk 操作
 
 ## 布局计算示例
 
@@ -192,15 +257,16 @@ xTdb/
 
 ## 开发路线图
 
-### ✅ 阶段1：物理层与布局管理器
+### ✅ 阶段1：物理层与布局管理器（已完成）
 - AlignedIO 类（16KB 对齐强制）
 - LayoutCalculator（偏移量计算）
-- T1/T2 测试通过
+- T1/T2 测试通过（22个测试用例）
 
-### 🔄 阶段2：头部定义与状态机
+### ✅ 阶段2：头部定义与状态机（已完成）
 - ContainerHeader / RawChunkHeader / BlockDirEntry
 - StateMutator（SealBlock/SealChunk/Deprecate）
-- Active-low 状态位（SSD 友好）
+- Active-low 状态位（SSD 友好，1→0 only）
+- T3/T4 测试通过（25个测试用例）
 
 ### 📋 阶段3：写入路径
 - WALWriter（写前日志）
@@ -223,14 +289,15 @@ xTdb/
 ## 性能指标
 
 - **编译时间**：< 5秒
-- **测试时间**：0.13秒（全部测试）
+- **测试时间**：0.13秒（4个测试套件，47个测试用例）
 - **内存开销**：零额外开销（纯计算）
 
 ## 技术文档
 
 - **设计文档**：[docs/design.md](docs/design.md) - V1.6 完整设计规范
 - **实施计划**：[docs/plan.md](docs/plan.md) - 6阶段开发计划
-- **阶段1总结**：[docs/phase1_summary.md](docs/phase1_summary.md) - 实现详情
+- **阶段1总结**：[docs/phase1_summary.md](docs/phase1_summary.md) - 物理层与布局管理器
+- **阶段2总结**：[docs/phase2_summary.md](docs/phase2_summary.md) - 头部定义与状态机
 
 ## 许可证
 
@@ -243,4 +310,4 @@ xTdb Development Team
 ---
 
 **最后更新**：2026-01-02
-**版本**：V1.6 (Phase 1 Completed)
+**版本**：V1.6 (Phase 1 & 2 Completed)

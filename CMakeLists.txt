@@ -32,6 +32,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 add_library(xtdb_core
     src/layout_calculator.cpp
     src/aligned_io.cpp
+    src/state_mutator.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -75,8 +76,32 @@ if(BUILD_TESTS)
     )
     add_test(NAME LayoutTest COMMAND test_layout)
 
+    # Test: Struct Size (T3)
+    add_executable(test_struct_size
+        tests/test_struct_size.cpp
+    )
+    target_link_libraries(test_struct_size
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME StructSizeTest COMMAND test_struct_size)
+
+    # Test: State Machine (T4)
+    add_executable(test_state_machine
+        tests/test_state_machine.cpp
+    )
+    target_link_libraries(test_state_machine
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME StateMachineTest COMMAND test_state_machine)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine")
 endif()
 
 # ============================================================================
