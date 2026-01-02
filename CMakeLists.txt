@@ -38,6 +38,8 @@ add_library(xtdb_core
     src/block_writer.cpp
     src/directory_builder.cpp
     src/chunk_sealer.cpp
+    src/raw_scanner.cpp
+    src/block_reader.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -129,8 +131,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME SealDirectoryTest COMMAND test_seal_directory)
 
+    # Test: Read & Recovery (T7, T8)
+    add_executable(test_read_recovery
+        tests/test_read_recovery.cpp
+    )
+    target_link_libraries(test_read_recovery
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME ReadRecoveryTest COMMAND test_read_recovery)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery")
 endif()
 
 # ============================================================================
