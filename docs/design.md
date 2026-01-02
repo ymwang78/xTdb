@@ -163,29 +163,39 @@ block_offset_bytes(chunk_id, block_index) = chunk_base + block_index * BLOCK_BYT
 
 ---
 
-## 6. ChunkHeader（集中目录体系的事实源）
+## 6. ChunkHeader（集中目录体系的事实源，SSD 友好状态位）
 
 ChunkHeader 放在 Meta Region 的第 0 块开头（block_index=0）。
 
 ```c
 #define RAW_CHUNK_MAGIC "XTSRAWCK" // 8 bytes
 
-enum ChunkFlags : uint32_t {
-    CHF_ACTIVE     = 1u << 0,
-    CHF_SEALED     = 1u << 1,
-    CHF_DEPRECATED = 1u << 2,
-    CHF_FREE       = 1u << 3
+// flags 采用 active-low / write-once：初始化全 1；状态推进只清 bit（1->0）。
+
+enum ChunkStateBit : uint8_t {
+    // 你要求：FREE -> ... -> DEPRECATED 的推进应体现 bit1->bit0 的清零过程
+    // 因此将生命周期关键位布置为：allocated=bit2, sealed=bit1, deprecated=bit0
+    CHB_DEPRECATED = 0,  // 1=未下线 0=已下线
+    CHB_SEALED     = 1,  // 1=未封存 0=已封存
+    CHB_ALLOCATED  = 2,  // 1=未分配(FREE候选) 0=已分配
+    CHB_FREE_MARK  = 3   // 1=未标记FREE 0=已标记FREE（仅工具用途，可选）
 };
 
-struct RawChunkHeaderV12 {
+static const uint32_t CH_FLAGS_INIT = 0xFFFFFFFFu;
+
+static inline uint32_t ch_clear(uint32_t flags, ChunkStateBit b) {
+    return flags & ~(1u << (uint32_t)b); // only 1->0
+}
+
+struct RawChunkHeaderV16 {
     char     magic[8];           // "XTSRAWCK"
-    uint16_t version;            // = 0x0102
-    uint16_t header_size;        // sizeof(RawChunkHeaderV12)
+    uint16_t version;            // = 0x0106
+    uint16_t header_size;        // sizeof(RawChunkHeaderV16)
 
     uint8_t  db_instance_id[16];
 
-    uint32_t chunk_id;           // slot id（FREE 后可复用）
-    uint32_t flags;              // ChunkFlags
+    uint32_t chunk_id;           // slot id（CH_FLAGS_INIT 时可视为 FREE 候选）
+    uint32_t flags;              // active-low 状态位，初始化 CH_FLAGS_INIT
 
     uint32_t chunk_size_extents; // 冗余写入（便于脱库扫描校验）
     uint32_t block_size_extents; // 冗余写入
@@ -196,7 +206,7 @@ struct RawChunkHeaderV12 {
     int64_t  start_ts_us;        // seal 后写定（chunk 内最小时间）
     int64_t  end_ts_us;          // seal 后写定（chunk 内最大时间）
 
-    uint32_t super_crc32;        // CRC32(所有 meta blocks 的有效元数据区，或整个 meta region)（实现选择其一并固定）
+    uint32_t super_crc32;        // CRC32(meta region)（实现固定口径）
     uint32_t reserved0;
 };
 ```
@@ -214,7 +224,8 @@ struct RawChunkHeaderV12 {
 
 目录项按 `data_index` 顺序排列，存放在 Meta Region 中（紧随 ChunkHeader）。
 
-### 7.2 目录项定义（建议 32~48B，便于密集存储）
+
+### 7.2 目录项定义
 
 ```c
 enum ValueType : uint8_t {
@@ -233,26 +244,32 @@ enum TimeUnit : uint8_t {
     TU_US    = 6
 };
 
-enum BlockFlags : uint32_t {
-    BF_SEALED         = 1u << 0,
-    BF_MONOTONIC_TIME = 1u << 1,
-    BF_NO_TIME_GAP    = 1u << 2
+enum BlockStateBit : uint8_t {
+    BLB_SEALED         = 0, // 1=未封存 0=已封存
+    BLB_MONOTONIC_TIME = 1, // 1=未断言 0=断言时间单调
+    BLB_NO_TIME_GAP    = 2  // 1=未断言 0=断言无漏点
 };
 
-struct BlockDirEntryV12 {
+static const uint32_t BL_FLAGS_INIT = 0xFFFFFFFFu;
+
+static inline uint32_t bl_clear(uint32_t flags, BlockStateBit b) {
+    return flags & ~(1u << (uint32_t)b);
+}
+
+struct BlockDirEntryV16 {
     uint32_t tag_id;
 
-    uint8_t  value_type;         // ValueType
-    uint8_t  time_unit;          // TimeUnit
-    uint16_t record_size;        // bytes per record (time_offset + quality + value)
+    uint8_t  value_type;
+    uint8_t  time_unit;
+    uint16_t record_size;
 
-    uint32_t flags;              // BlockFlags
+    uint32_t flags;              // active-low，初始化 BL_FLAGS_INIT
 
-    int64_t  start_ts_us;        // block 基准时间（pg epoch us）
+    int64_t  start_ts_us;
     int64_t  end_ts_us;          // seal 后写定
 
     uint32_t record_count;       // seal 后写定；未 seal = 0xFFFFFFFF
-    uint32_t data_crc32;         // 可选：对 data block 有效载荷做 CRC（seal 后写）
+    uint32_t data_crc32;         // 可选：seal 后写定
 };
 ```
 
