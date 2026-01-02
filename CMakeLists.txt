@@ -36,6 +36,8 @@ add_library(xtdb_core
     src/wal_writer.cpp
     src/mem_buffer.cpp
     src/block_writer.cpp
+    src/directory_builder.cpp
+    src/chunk_sealer.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -115,8 +117,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME WritePathTest COMMAND test_write_path)
 
+    # Test: Seal & Directory (T6)
+    add_executable(test_seal_directory
+        tests/test_seal_directory.cpp
+    )
+    target_link_libraries(test_seal_directory
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME SealDirectoryTest COMMAND test_seal_directory)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory")
 endif()
 
 # ============================================================================

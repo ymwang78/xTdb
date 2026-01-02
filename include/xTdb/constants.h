@@ -27,6 +27,11 @@ constexpr bool isExtentAligned(uint64_t bytes) {
     return (bytes % kExtentSizeBytes) == 0;
 }
 
+/// Helper: Align byte count up to nearest extent boundary
+constexpr uint64_t alignToExtent(uint64_t bytes) {
+    return ((bytes + kExtentSizeBytes - 1) / kExtentSizeBytes) * kExtentSizeBytes;
+}
+
 // ============================================================================
 // RAW Block Classes (Fixed-size blocks)
 // ============================================================================
