@@ -22,6 +22,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # ============================================================================
+# Dependencies
+# ============================================================================
+find_package(SQLite3 REQUIRED)
+
+# ============================================================================
 # Include Directories
 # ============================================================================
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -40,10 +45,15 @@ add_library(xtdb_core
     src/chunk_sealer.cpp
     src/raw_scanner.cpp
     src/block_reader.cpp
+    src/metadata_sync.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
     ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(xtdb_core PUBLIC
+    SQLite::SQLite3
 )
 
 # ============================================================================
@@ -143,8 +153,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME ReadRecoveryTest COMMAND test_read_recovery)
 
+    # Test: End-to-End (T9)
+    add_executable(test_end_to_end
+        tests/test_end_to_end.cpp
+    )
+    target_link_libraries(test_end_to_end
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME EndToEndTest COMMAND test_end_to_end)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end")
 endif()
 
 # ============================================================================
