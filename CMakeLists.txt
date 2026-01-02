@@ -33,6 +33,9 @@ add_library(xtdb_core
     src/layout_calculator.cpp
     src/aligned_io.cpp
     src/state_mutator.cpp
+    src/wal_writer.cpp
+    src/mem_buffer.cpp
+    src/block_writer.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -100,8 +103,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME StateMachineTest COMMAND test_state_machine)
 
+    # Test: Write Path (T5)
+    add_executable(test_write_path
+        tests/test_write_path.cpp
+    )
+    target_link_libraries(test_write_path
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME WritePathTest COMMAND test_write_path)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path")
 endif()
 
 # ============================================================================
