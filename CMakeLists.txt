@@ -178,8 +178,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME RestartConsistencyTest COMMAND test_restart_consistency)
 
+    # Test: Write Coordinator (T11)
+    add_executable(test_write_coordinator
+        tests/test_write_coordinator.cpp
+    )
+    target_link_libraries(test_write_coordinator
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME WriteCoordinatorTest COMMAND test_write_coordinator)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator")
 endif()
 
 # ============================================================================

@@ -109,6 +109,30 @@ public:
     /// Get metadata sync (for testing)
     MetadataSync* getMetadataSync() { return metadata_.get(); }
 
+    /// Write a single data point
+    /// @param tag_id Tag ID
+    /// @param timestamp_us Timestamp in microseconds
+    /// @param value Value
+    /// @param quality Quality byte
+    /// @return EngineResult
+    EngineResult writePoint(uint32_t tag_id,
+                           int64_t timestamp_us,
+                           double value,
+                           uint8_t quality = 192);
+
+    /// Flush buffers to disk
+    /// @return EngineResult
+    EngineResult flush();
+
+    /// Get write statistics
+    struct WriteStats {
+        uint64_t points_written = 0;
+        uint64_t blocks_flushed = 0;
+        uint64_t chunks_sealed = 0;
+        uint64_t chunks_allocated = 0;
+    };
+    const WriteStats& getWriteStats() const { return write_stats_; }
+
 private:
     /// Bootstrap step 1: Connect to SQLite
     EngineResult connectMetadata();
@@ -150,6 +174,7 @@ private:
     std::vector<ContainerInfo> containers_;      // All mounted containers
     ActiveChunkInfo active_chunk_;               // Current active chunk
     std::unordered_map<uint32_t, TagBuffer> buffers_;  // Tag -> MemBuffer
+    WriteStats write_stats_;                     // Write statistics
 };
 
 }  // namespace xtdb

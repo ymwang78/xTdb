@@ -332,6 +332,192 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
     return EngineResult::SUCCESS;
 }
 
+EngineResult StorageEngine::writePoint(uint32_t tag_id,
+                                       int64_t timestamp_us,
+                                       double value,
+                                       uint8_t quality) {
+    if (!is_open_) {
+        setError("Engine not open");
+        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+    }
+
+    // Step 1: WAL Append (for crash recovery)
+    // TODO Phase 8: Implement WAL append
+    // For now, we skip WAL and focus on buffer management
+
+    // Step 2: Add point to memory buffer through WAL entry
+    WALEntry entry;
+    entry.tag_id = tag_id;
+    entry.timestamp_us = timestamp_us;
+    entry.value_type = static_cast<uint8_t>(ValueType::VT_F64);
+    entry.value.f64_value = value;
+    entry.quality = quality;
+
+    // Find or create MemBuffer for this tag
+    auto it = buffers_.find(tag_id);
+    if (it == buffers_.end()) {
+        // Create new buffer
+        TagBuffer new_buffer;
+        new_buffer.tag_id = tag_id;
+        new_buffer.value_type = ValueType::VT_F64;
+        new_buffer.time_unit = TimeUnit::TU_MS;
+        new_buffer.start_ts_us = timestamp_us;
+        buffers_[tag_id] = new_buffer;
+        it = buffers_.find(tag_id);
+    }
+
+    // Add record to buffer
+    TagBuffer& tag_buffer = it->second;
+
+    // Create MemRecord
+    MemRecord record;
+    record.time_offset = static_cast<uint32_t>((timestamp_us - tag_buffer.start_ts_us) / 1000);  // Convert to ms
+    record.quality = quality;
+    record.value.f64_value = value;
+    tag_buffer.records.push_back(record);
+
+    write_stats_.points_written++;
+
+    // Step 3: Check if buffer needs flush (threshold: 1000 records or ~16KB)
+    if (tag_buffer.records.size() >= 1000) {
+        // Trigger flush for this buffer
+        // For Phase 8 simplification, we flush synchronously
+        // In production, this should be async via thread pool
+        EngineResult flush_result = flush();
+        if (flush_result != EngineResult::SUCCESS) {
+            return flush_result;
+        }
+    }
+
+    return EngineResult::SUCCESS;
+}
+
+EngineResult StorageEngine::flush() {
+    if (!is_open_) {
+        setError("Engine not open");
+        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+    }
+
+    // Flush all non-empty buffers
+    for (auto& [tag_id, tag_buffer] : buffers_) {
+        if (tag_buffer.records.empty()) {
+            continue;
+        }
+
+        // Check if we need to roll (allocate new chunk)
+        if (active_chunk_.blocks_used >= active_chunk_.blocks_total) {
+            // Chunk is full, need to seal and allocate new one
+
+            // Seal current chunk
+            ChunkSealer sealer(io_.get(), mutator_.get());
+            int64_t final_start_ts = active_chunk_.start_ts_us;
+            int64_t final_end_ts = active_chunk_.end_ts_us;
+
+            SealResult seal_result = sealer.sealChunk(active_chunk_.chunk_offset,
+                                                     config_.layout,
+                                                     final_start_ts,
+                                                     final_end_ts);
+            if (seal_result != SealResult::SUCCESS) {
+                setError("Failed to seal chunk: " + sealer.getLastError());
+                return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+            }
+
+            write_stats_.chunks_sealed++;
+
+            // Allocate new chunk at next position
+            uint64_t new_chunk_offset = active_chunk_.chunk_offset +
+                                       config_.layout.chunk_size_bytes;
+
+            // Update active chunk info before allocation
+            active_chunk_.chunk_id++;
+            active_chunk_.chunk_offset = new_chunk_offset;
+            active_chunk_.blocks_used = 0;
+            active_chunk_.start_ts_us = 0;
+            active_chunk_.end_ts_us = 0;
+
+            EngineResult alloc_result = allocateNewChunk(new_chunk_offset);
+            if (alloc_result != EngineResult::SUCCESS) {
+                return alloc_result;
+            }
+
+            write_stats_.chunks_allocated++;
+        }
+
+        // Write block to disk using BlockWriter
+        BlockWriter writer(io_.get(), config_.layout, kExtentSizeBytes);
+
+        uint32_t data_block_index = active_chunk_.blocks_used;
+        BlockWriteResult write_result = writer.writeBlock(active_chunk_.chunk_id,
+                                                         data_block_index,
+                                                         tag_buffer);
+        if (write_result != BlockWriteResult::SUCCESS) {
+            setError("Failed to write block: " + writer.getLastError());
+            return EngineResult::ERROR_INVALID_DATA;
+        }
+
+        write_stats_.blocks_flushed++;
+
+        // Update directory entry
+        DirectoryBuilder dir_builder(io_.get(), config_.layout, active_chunk_.chunk_offset);
+
+        // Initialize directory
+        DirBuildResult init_result = dir_builder.initialize();
+        if (init_result != DirBuildResult::SUCCESS) {
+            setError("Failed to initialize directory: " + dir_builder.getLastError());
+            return EngineResult::ERROR_INVALID_DATA;
+        }
+
+        // Get timestamp range from tag_buffer
+        int64_t block_start_ts = tag_buffer.start_ts_us;
+        int64_t block_end_ts = tag_buffer.start_ts_us;
+        if (!tag_buffer.records.empty()) {
+            // Find the maximum time_offset to calculate end_ts
+            uint32_t max_offset = 0;
+            for (const auto& rec : tag_buffer.records) {
+                if (rec.time_offset > max_offset) {
+                    max_offset = rec.time_offset;
+                }
+            }
+            block_end_ts = tag_buffer.start_ts_us + static_cast<int64_t>(max_offset) * 1000;
+        }
+
+        DirBuildResult dir_result = dir_builder.sealBlock(
+            data_block_index,
+            tag_id,
+            block_start_ts,
+            block_end_ts,
+            tag_buffer.time_unit,
+            tag_buffer.value_type,
+            static_cast<uint32_t>(tag_buffer.records.size()),
+            0  // TODO: Calculate CRC32
+        );
+
+        if (dir_result != DirBuildResult::SUCCESS) {
+            setError("Failed to seal block in directory: " + dir_builder.getLastError());
+            return EngineResult::ERROR_INVALID_DATA;
+        }
+
+        // Write directory to disk
+        dir_result = dir_builder.writeDirectory();
+        if (dir_result != DirBuildResult::SUCCESS) {
+            setError("Failed to write directory: " + dir_builder.getLastError());
+            return EngineResult::ERROR_INVALID_DATA;
+        }
+
+        // Update active chunk tracking
+        active_chunk_.blocks_used++;
+        if (active_chunk_.start_ts_us == 0) {
+            active_chunk_.start_ts_us = block_start_ts;
+        }
+        active_chunk_.end_ts_us = block_end_ts;
+
+        // Clear buffer after successful write
+        tag_buffer.records.clear();
+    }
+
+    return EngineResult::SUCCESS;
+}
+
 void StorageEngine::setError(const std::string& message) {
     last_error_ = message;
 }
