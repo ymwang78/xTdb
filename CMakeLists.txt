@@ -190,8 +190,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME WriteCoordinatorTest COMMAND test_write_coordinator)
 
+    # Test: Read Coordinator (T12)
+    add_executable(test_read_coordinator
+        tests/test_read_coordinator.cpp
+    )
+    target_link_libraries(test_read_coordinator
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME ReadCoordinatorTest COMMAND test_read_coordinator)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator")
 endif()
 
 # ============================================================================

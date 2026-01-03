@@ -138,9 +138,10 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
                                  uint32_t record_count,
                                  std::vector<MemRecord>& records) {
     // Calculate data block physical offset
+    // block_offset = chunk_offset + (meta_blocks + data_block_index) * block_size
     uint32_t physical_block_index = layout_.meta_blocks + block_index;
-    uint64_t block_offset = LayoutCalculator::calculateBlockOffset(
-        chunk_offset, physical_block_index, layout_);
+    uint64_t block_offset = chunk_offset +
+                           static_cast<uint64_t>(physical_block_index) * layout_.block_size_bytes;
 
     // Read block
     AlignedBuffer buffer(layout_.block_size_bytes);
@@ -177,9 +178,10 @@ ReadResult BlockReader::verifyBlockIntegrity(uint64_t chunk_offset,
                                             uint32_t block_index,
                                             uint32_t expected_crc32) {
     // Calculate data block physical offset
+    // block_offset = chunk_offset + (meta_blocks + data_block_index) * block_size
     uint32_t physical_block_index = layout_.meta_blocks + block_index;
-    uint64_t block_offset = LayoutCalculator::calculateBlockOffset(
-        chunk_offset, physical_block_index, layout_);
+    uint64_t block_offset = chunk_offset +
+                           static_cast<uint64_t>(physical_block_index) * layout_.block_size_bytes;
 
     // Read block
     AlignedBuffer buffer(layout_.block_size_bytes);

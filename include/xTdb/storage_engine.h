@@ -133,6 +133,36 @@ public:
     };
     const WriteStats& getWriteStats() const { return write_stats_; }
 
+    /// Query result point
+    struct QueryPoint {
+        int64_t timestamp_us;
+        double value;
+        uint8_t quality;
+
+        QueryPoint(int64_t ts, double val, uint8_t q)
+            : timestamp_us(ts), value(val), quality(q) {}
+    };
+
+    /// Query data points by tag and time range
+    /// @param tag_id Tag ID
+    /// @param start_ts_us Start timestamp (microseconds, inclusive)
+    /// @param end_ts_us End timestamp (microseconds, inclusive)
+    /// @param results Output vector of query points
+    /// @return EngineResult
+    EngineResult queryPoints(uint32_t tag_id,
+                            int64_t start_ts_us,
+                            int64_t end_ts_us,
+                            std::vector<QueryPoint>& results);
+
+    /// Get read statistics
+    struct ReadStats {
+        uint64_t queries_executed = 0;
+        uint64_t blocks_read = 0;
+        uint64_t points_read_disk = 0;
+        uint64_t points_read_memory = 0;
+    };
+    const ReadStats& getReadStats() const { return read_stats_; }
+
 private:
     /// Bootstrap step 1: Connect to SQLite
     EngineResult connectMetadata();
@@ -169,12 +199,14 @@ private:
     std::unique_ptr<AlignedIO> io_;              // File I/O
     std::unique_ptr<MetadataSync> metadata_;     // SQLite connection
     std::unique_ptr<StateMutator> mutator_;      // State machine
+    std::unique_ptr<DirectoryBuilder> dir_builder_;  // Active chunk directory
 
     // Runtime state
     std::vector<ContainerInfo> containers_;      // All mounted containers
     ActiveChunkInfo active_chunk_;               // Current active chunk
     std::unordered_map<uint32_t, TagBuffer> buffers_;  // Tag -> MemBuffer
     WriteStats write_stats_;                     // Write statistics
+    ReadStats read_stats_;                       // Read statistics
 };
 
 }  // namespace xtdb

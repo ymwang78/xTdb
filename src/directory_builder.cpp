@@ -25,6 +25,37 @@ DirBuildResult DirectoryBuilder::initialize() {
     return DirBuildResult::SUCCESS;
 }
 
+DirBuildResult DirectoryBuilder::load() {
+    // Calculate directory size
+    uint64_t dir_size_bytes = layout_.data_blocks * sizeof(BlockDirEntryV16);
+    uint64_t buffer_size = alignToExtent(dir_size_bytes);
+
+    // Calculate directory offset (starts at block 1)
+    uint64_t dir_offset = chunk_offset_ + layout_.block_size_bytes;
+
+    // Read directory from disk
+    AlignedBuffer buffer(buffer_size);
+    IOResult result = io_->read(buffer.data(), buffer_size, dir_offset);
+    if (result != IOResult::SUCCESS) {
+        setError("Failed to load block directory: " + io_->getLastError());
+        return DirBuildResult::ERROR_IO_FAILED;
+    }
+
+    // Copy entries from buffer
+    entries_.resize(layout_.data_blocks);
+    std::memcpy(entries_.data(), buffer.data(), dir_size_bytes);
+
+    // Count sealed blocks
+    sealed_block_count_ = 0;
+    for (const auto& entry : entries_) {
+        if (entry.record_count != 0xFFFFFFFFu) {
+            sealed_block_count_++;
+        }
+    }
+
+    return DirBuildResult::SUCCESS;
+}
+
 DirBuildResult DirectoryBuilder::sealBlock(uint32_t block_index,
                                           uint32_t tag_id,
                                           int64_t start_ts_us,

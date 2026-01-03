@@ -1,62 +1,90 @@
-#include <gtest/gtest.h>
-#include "xTdb/storage_engine.h"
-#include "xTdb/constants.h"
-#include <filesystem>
 #include <iostream>
+#include "xTdb/storage_engine.h"
+#include "xTdb/raw_scanner.h"
 
 using namespace xtdb;
-namespace fs = std::filesystem;
 
-TEST(WriteDebugTest, MinimalWrite) {
-    std::string test_dir = "/tmp/xtdb_write_debug";
+int main() {
+    // Clean and setup
+    system("rm -rf /tmp/xtdb_debug && mkdir -p /tmp/xtdb_debug");
 
-    // Clean up
-    if (fs::exists(test_dir)) {
-        fs::remove_all(test_dir);
-    }
-    fs::create_directories(test_dir);
-
-    // Setup config
     EngineConfig config;
-    config.data_dir = test_dir;
-    config.db_path = test_dir + "/meta.db";
+    config.data_dir = "/tmp/xtdb_debug";
+    config.db_path = "/tmp/xtdb_debug/meta.db";
     config.layout.block_size_bytes = 16384;
     config.layout.chunk_size_bytes = 4 * 1024 * 1024;
 
-    std::cout << "Creating engine..." << std::endl;
     StorageEngine engine(config);
 
-    std::cout << "Opening engine..." << std::endl;
+    std::cout << "=== Opening engine ===" << std::endl;
     EngineResult result = engine.open();
     if (result != EngineResult::SUCCESS) {
-        std::cerr << "Failed to open: " << engine.getLastError() << std::endl;
+        std::cout << "Failed to open: " << engine.getLastError() << std::endl;
+        return 1;
     }
-    ASSERT_EQ(EngineResult::SUCCESS, result);
 
-    std::cout << "Writing single point..." << std::endl;
-    result = engine.writePoint(100, 1000000, 42.5, 192);
-    if (result != EngineResult::SUCCESS) {
-        std::cerr << "Failed to write: " << engine.getLastError() << std::endl;
+    const uint32_t tag_id = 100;
+    const int64_t base_ts = 1000000;
+
+    std::cout << "=== Writing 1001 points ===" << std::endl;
+    for (int i = 0; i < 1001; i++) {
+        result = engine.writePoint(tag_id, base_ts + i * 1000, 42.0 + i, 192);
+        if (result != EngineResult::SUCCESS) {
+            std::cout << "Failed to write point " << i << ": " << engine.getLastError() << std::endl;
+            return 1;
+        }
     }
-    EXPECT_EQ(EngineResult::SUCCESS, result);
 
-    std::cout << "Flushing..." << std::endl;
-    result = engine.flush();
-    if (result != EngineResult::SUCCESS) {
-        std::cerr << "Failed to flush: " << engine.getLastError() << std::endl;
+    std::cout << "=== Checking write stats ===" << std::endl;
+    auto write_stats = engine.getWriteStats();
+    std::cout << "Points written: " << write_stats.points_written << std::endl;
+    std::cout << "Blocks flushed: " << write_stats.blocks_flushed << std::endl;
+
+    if (write_stats.blocks_flushed == 0) {
+        std::cout << "ERROR: No blocks flushed!" << std::endl;
+        return 1;
     }
-    EXPECT_EQ(EngineResult::SUCCESS, result);
 
-    std::cout << "Closing engine..." << std::endl;
+    std::cout << "=== Checking active chunk ===" << std::endl;
+    auto chunk_info = engine.getActiveChunk();
+    std::cout << "Chunk ID: " << chunk_info.chunk_id << std::endl;
+    std::cout << "Chunk offset: " << chunk_info.chunk_offset << std::endl;
+    std::cout << "Blocks used: " << chunk_info.blocks_used << std::endl;
+
+    std::cout << "=== Scanning chunk with RawScanner ===" << std::endl;
+    AlignedIO* io = engine.getMetadataSync()->getIO();
+    RawScanner scanner(io);
+    ScannedChunk scanned_chunk;
+    ScanResult scan_result = scanner.scanChunk(chunk_info.chunk_offset,
+                                               config.layout,
+                                               scanned_chunk);
+
+    if (scan_result != ScanResult::SUCCESS) {
+        std::cout << "Scan failed: " << scanner.getLastError() << std::endl;
+    } else {
+        std::cout << "Scan success!" << std::endl;
+        std::cout << "Sealed blocks found: " << scanned_chunk.blocks.size() << std::endl;
+        for (size_t i = 0; i < scanned_chunk.blocks.size(); i++) {
+            const auto& block = scanned_chunk.blocks[i];
+            std::cout << "  Block " << i << ": tag=" << block.tag_id
+                      << " records=" << block.record_count
+                      << " sealed=" << block.is_sealed << std::endl;
+        }
+    }
+
+    std::cout << "=== Querying data ===" << std::endl;
+    std::vector<StorageEngine::QueryPoint> results;
+    result = engine.queryPoints(tag_id, base_ts, base_ts + 500 * 1000, results);
+
+    std::cout << "Query result: " << (result == EngineResult::SUCCESS ? "SUCCESS" : "FAILED") << std::endl;
+    std::cout << "Points returned: " << results.size() << std::endl;
+
+    auto read_stats = engine.getReadStats();
+    std::cout << "Points from memory: " << read_stats.points_read_memory << std::endl;
+    std::cout << "Points from disk: " << read_stats.points_read_disk << std::endl;
+    std::cout << "Blocks read: " << read_stats.blocks_read << std::endl;
+
     engine.close();
 
-    std::cout << "Done!" << std::endl;
-
-    // Clean up
-    fs::remove_all(test_dir);
-}
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    return 0;
 }

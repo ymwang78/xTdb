@@ -45,6 +45,10 @@ public:
     /// @return DirBuildResult
     DirBuildResult initialize();
 
+    /// Load existing directory from disk
+    /// @return DirBuildResult
+    DirBuildResult load();
+
     /// Seal a block (update BlockDirEntry with metadata)
     /// @param block_index Data block index (0-based)
     /// @param tag_id Tag ID
