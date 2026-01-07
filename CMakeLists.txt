@@ -49,6 +49,8 @@ add_library(xtdb_core
     src/storage_engine.cpp
     src/swinging_door_encoder.cpp
     src/swinging_door_decoder.cpp
+    src/quantized_16_encoder.cpp
+    src/quantized_16_decoder.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -284,8 +286,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME CompressionE2ETest COMMAND test_compression_e2e)
 
+    # Test: 16-bit Quantization (T16 - Phase 13)
+    add_executable(test_quantized_16
+        tests/test_quantized_16.cpp
+    )
+    target_link_libraries(test_quantized_16
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME Quantized16Test COMMAND test_quantized_16)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16")
 endif()
 
 # ============================================================================

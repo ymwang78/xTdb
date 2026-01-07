@@ -6,6 +6,7 @@
 #include "layout_calculator.h"
 #include "mem_buffer.h"
 #include "swinging_door_decoder.h"
+#include "quantized_16_decoder.h"
 #include <cstdint>
 #include <vector>
 #include <string>

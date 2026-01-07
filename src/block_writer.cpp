@@ -143,6 +143,39 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
             data_size += 1;
         }
 
+    } else if (tag_buffer.encoding_type == EncodingType::ENC_QUANTIZED_16) {
+        // Use 16-bit Quantization compression
+        // Parameters stored in encoding_tolerance (low_extreme) and encoding_compression_factor (high_extreme)
+        Quantized16Encoder encoder(tag_buffer.encoding_tolerance,
+                                    tag_buffer.encoding_compression_factor);
+
+        std::vector<Quantized16Encoder::QuantizedPoint> quantized;
+        auto encode_result = encoder.encode(tag_buffer.start_ts_us,
+                                            tag_buffer.records,
+                                            quantized);
+
+        if (encode_result != Quantized16Encoder::EncodeResult::SUCCESS) {
+            setError("16-bit Quantization encoding failed: " + encoder.getLastError());
+            return BlockWriteResult::ERROR_IO_FAILED;
+        }
+
+        // Serialize quantized points
+        // Format: [count:4B] [point1] [point2] ...
+        // Each point: [time_offset:4B] [quantized_value:2B] [quality:1B]
+        char* ptr = static_cast<char*>(buffer.data());
+        uint32_t count = static_cast<uint32_t>(quantized.size());
+        std::memcpy(ptr, &count, 4);
+        data_size = 4;
+
+        for (const auto& qp : quantized) {
+            std::memcpy(ptr + data_size, &qp.time_offset, 4);
+            data_size += 4;
+            std::memcpy(ptr + data_size, &qp.quantized_value, 2);
+            data_size += 2;
+            std::memcpy(ptr + data_size, &qp.quality, 1);
+            data_size += 1;
+        }
+
     } else {
         // ENC_RAW: Use standard serialization
         data_size = serializeRecords(tag_buffer,

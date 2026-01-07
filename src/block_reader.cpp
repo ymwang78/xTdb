@@ -260,6 +260,48 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
         stats_.bytes_read += layout_.block_size_bytes;
         stats_.records_read += static_cast<uint32_t>(compressed.size());
 
+    } else if (dir_entry.encoding_type == static_cast<uint8_t>(EncodingType::ENC_QUANTIZED_16)) {
+        // 16-bit Quantization decoding
+        const char* ptr = static_cast<const char*>(buffer.data());
+
+        // Read quantized point count
+        uint32_t count;
+        std::memcpy(&count, ptr, 4);
+        uint64_t offset = 4;
+
+        // Parse quantized points
+        std::vector<Quantized16Encoder::QuantizedPoint> quantized;
+        for (uint32_t i = 0; i < count; i++) {
+            Quantized16Encoder::QuantizedPoint qp;
+            std::memcpy(&qp.time_offset, ptr + offset, 4);
+            offset += 4;
+            std::memcpy(&qp.quantized_value, ptr + offset, 2);
+            offset += 2;
+            std::memcpy(&qp.quality, ptr + offset, 1);
+            offset += 1;
+            quantized.push_back(qp);
+        }
+
+        // Extract decoding parameters from directory entry
+        // encoding_param1 and encoding_param2 contain low_extreme and high_extreme as floats
+        float low_extreme_f, high_extreme_f;
+        std::memcpy(&low_extreme_f, &dir_entry.encoding_param1, 4);
+        std::memcpy(&high_extreme_f, &dir_entry.encoding_param2, 4);
+
+        // Decode quantized values
+        Quantized16Decoder decoder(static_cast<double>(low_extreme_f),
+                                   static_cast<double>(high_extreme_f));
+
+        auto decode_result = decoder.decode(dir_entry.start_ts_us, quantized, records);
+        if (decode_result != Quantized16Decoder::DecodeResult::SUCCESS) {
+            setError("16-bit Quantization decoding failed: " + decoder.getLastError());
+            return ReadResult::ERROR_PARSE_FAILED;
+        }
+
+        stats_.blocks_read++;
+        stats_.bytes_read += layout_.block_size_bytes;
+        stats_.records_read += static_cast<uint32_t>(quantized.size());
+
     } else {
         // ENC_RAW: Standard parsing
         ReadResult parse_result = parseRecords(buffer.data(),
