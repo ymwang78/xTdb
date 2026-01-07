@@ -272,8 +272,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME SwingingDoorTest COMMAND test_swinging_door)
 
+    # Test: Compression End-to-End (T15 - Phase 12)
+    add_executable(test_compression_e2e
+        tests/test_compression_e2e.cpp
+    )
+    target_link_libraries(test_compression_e2e
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME CompressionE2ETest COMMAND test_compression_e2e)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e")
 endif()
 
 # ============================================================================

@@ -204,6 +204,81 @@ ReadResult BlockReader::verifyBlockIntegrity(uint64_t chunk_offset,
     return ReadResult::SUCCESS;
 }
 
+ReadResult BlockReader::readBlock(uint64_t chunk_offset,
+                                 uint32_t block_index,
+                                 const BlockDirEntryV16& dir_entry,
+                                 std::vector<MemRecord>& records) {
+    // Calculate data block physical offset
+    uint32_t physical_block_index = layout_.meta_blocks + block_index;
+    uint64_t block_offset = chunk_offset +
+                           static_cast<uint64_t>(physical_block_index) * layout_.block_size_bytes;
+
+    // Read block
+    AlignedBuffer buffer(layout_.block_size_bytes);
+    IOResult io_result = io_->read(buffer.data(), layout_.block_size_bytes, block_offset);
+    if (io_result != IOResult::SUCCESS) {
+        setError("Failed to read data block: " + io_->getLastError());
+        return ReadResult::ERROR_IO_FAILED;
+    }
+
+    records.clear();
+
+    // Decode based on encoding type
+    if (dir_entry.encoding_type == static_cast<uint8_t>(EncodingType::ENC_SWINGING_DOOR)) {
+        // Swinging Door decoding
+        const char* ptr = static_cast<const char*>(buffer.data());
+
+        // Read compressed point count
+        uint32_t count;
+        std::memcpy(&count, ptr, 4);
+        uint64_t offset = 4;
+
+        // Parse compressed points
+        std::vector<SwingingDoorEncoder::CompressedPoint> compressed;
+        for (uint32_t i = 0; i < count; i++) {
+            SwingingDoorEncoder::CompressedPoint cp;
+            std::memcpy(&cp.time_offset, ptr + offset, 4);
+            offset += 4;
+            std::memcpy(&cp.value, ptr + offset, 8);
+            offset += 8;
+            std::memcpy(&cp.quality, ptr + offset, 1);
+            offset += 1;
+            compressed.push_back(cp);
+        }
+
+        // For now, return the compressed points as-is (no interpolation)
+        // The application can use SwingingDoorDecoder::interpolate() for specific timestamps
+        for (const auto& cp : compressed) {
+            MemRecord rec;
+            rec.time_offset = cp.time_offset;
+            rec.value.f64_value = cp.value;
+            rec.quality = cp.quality;
+            records.push_back(rec);
+        }
+
+        stats_.blocks_read++;
+        stats_.bytes_read += layout_.block_size_bytes;
+        stats_.records_read += static_cast<uint32_t>(compressed.size());
+
+    } else {
+        // ENC_RAW: Standard parsing
+        ReadResult parse_result = parseRecords(buffer.data(),
+                                              layout_.block_size_bytes,
+                                              static_cast<ValueType>(dir_entry.value_type),
+                                              dir_entry.record_count,
+                                              records);
+        if (parse_result != ReadResult::SUCCESS) {
+            return parse_result;
+        }
+
+        stats_.blocks_read++;
+        stats_.bytes_read += layout_.block_size_bytes;
+        stats_.records_read += dir_entry.record_count;
+    }
+
+    return ReadResult::SUCCESS;
+}
+
 void BlockReader::setError(const std::string& message) {
     last_error_ = message;
 }

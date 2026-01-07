@@ -5,6 +5,7 @@
 #include "aligned_io.h"
 #include "layout_calculator.h"
 #include "mem_buffer.h"
+#include "swinging_door_decoder.h"
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -65,6 +66,17 @@ public:
                         TimeUnit time_unit,
                         ValueType value_type,
                         uint32_t record_count,
+                        std::vector<MemRecord>& records);
+
+    /// Read a data block with encoding support
+    /// @param chunk_offset Offset of the chunk in file
+    /// @param block_index Data block index (0-based)
+    /// @param dir_entry Block directory entry with encoding metadata
+    /// @param records Output: parsed records
+    /// @return ReadResult
+    ReadResult readBlock(uint64_t chunk_offset,
+                        uint32_t block_index,
+                        const BlockDirEntryV16& dir_entry,
                         std::vector<MemRecord>& records);
 
     /// Verify block data integrity (CRC32)

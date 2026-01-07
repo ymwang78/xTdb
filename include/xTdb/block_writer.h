@@ -4,6 +4,7 @@
 #include "aligned_io.h"
 #include "layout_calculator.h"
 #include "mem_buffer.h"
+#include "swinging_door_encoder.h"
 #include <cstdint>
 #include <string>
 

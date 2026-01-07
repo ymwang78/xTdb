@@ -58,6 +58,9 @@ public:
     /// @param value_type Value type for records
     /// @param record_count Number of records in block
     /// @param data_crc32 CRC32 of block data
+    /// @param encoding_type Encoding/compression type
+    /// @param encoding_param1 Encoding parameter 1 (context-dependent)
+    /// @param encoding_param2 Encoding parameter 2 (context-dependent)
     /// @return DirBuildResult
     DirBuildResult sealBlock(uint32_t block_index,
                             uint32_t tag_id,
@@ -66,7 +69,10 @@ public:
                             TimeUnit time_unit,
                             ValueType value_type,
                             uint32_t record_count,
-                            uint32_t data_crc32);
+                            uint32_t data_crc32,
+                            EncodingType encoding_type = EncodingType::ENC_RAW,
+                            uint32_t encoding_param1 = 0,
+                            uint32_t encoding_param2 = 0);
 
     /// Write directory to meta region
     /// @return DirBuildResult

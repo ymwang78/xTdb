@@ -517,6 +517,13 @@ EngineResult StorageEngine::flush() {
             block_end_ts = tag_buffer.start_ts_us + static_cast<int64_t>(max_offset) * 1000;
         }
 
+        // Convert encoding parameters to uint32_t (store as float bits)
+        float tolerance_f = static_cast<float>(tag_buffer.encoding_tolerance);
+        float compression_factor_f = static_cast<float>(tag_buffer.encoding_compression_factor);
+        uint32_t encoding_param1, encoding_param2;
+        std::memcpy(&encoding_param1, &tolerance_f, 4);
+        std::memcpy(&encoding_param2, &compression_factor_f, 4);
+
         DirBuildResult dir_result = dir_builder_->sealBlock(
             data_block_index,
             tag_id,
@@ -525,7 +532,10 @@ EngineResult StorageEngine::flush() {
             tag_buffer.time_unit,
             tag_buffer.value_type,
             static_cast<uint32_t>(tag_buffer.records.size()),
-            0  // TODO: Calculate CRC32
+            0,  // TODO: Calculate CRC32
+            tag_buffer.encoding_type,
+            encoding_param1,
+            encoding_param2
         );
 
         if (dir_result != DirBuildResult::SUCCESS) {

@@ -108,10 +108,47 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
     AlignedBuffer buffer(layout_.block_size_bytes);
     buffer.zero();
 
-    // Serialize records into buffer
-    uint64_t data_size = serializeRecords(tag_buffer,
-                                          buffer.data(),
-                                          buffer.size());
+    uint64_t data_size = 0;
+
+    // Choose encoding based on tag configuration
+    if (tag_buffer.encoding_type == EncodingType::ENC_SWINGING_DOOR) {
+        // Use Swinging Door compression
+        SwingingDoorEncoder encoder(tag_buffer.encoding_tolerance,
+                                     tag_buffer.encoding_compression_factor);
+
+        std::vector<SwingingDoorEncoder::CompressedPoint> compressed;
+        auto encode_result = encoder.encode(tag_buffer.start_ts_us,
+                                            tag_buffer.records,
+                                            compressed);
+
+        if (encode_result != SwingingDoorEncoder::EncodeResult::SUCCESS) {
+            setError("Swinging Door encoding failed: " + encoder.getLastError());
+            return BlockWriteResult::ERROR_IO_FAILED;
+        }
+
+        // Serialize compressed points
+        // Format: [count:4B] [point1] [point2] ...
+        // Each point: [time_offset:4B] [value:8B] [quality:1B]
+        char* ptr = static_cast<char*>(buffer.data());
+        uint32_t count = static_cast<uint32_t>(compressed.size());
+        std::memcpy(ptr, &count, 4);
+        data_size = 4;
+
+        for (const auto& cp : compressed) {
+            std::memcpy(ptr + data_size, &cp.time_offset, 4);
+            data_size += 4;
+            std::memcpy(ptr + data_size, &cp.value, 8);
+            data_size += 8;
+            std::memcpy(ptr + data_size, &cp.quality, 1);
+            data_size += 1;
+        }
+
+    } else {
+        // ENC_RAW: Use standard serialization
+        data_size = serializeRecords(tag_buffer,
+                                     buffer.data(),
+                                     buffer.size());
+    }
 
     // Check if data fits in block
     if (data_size > layout_.block_size_bytes) {

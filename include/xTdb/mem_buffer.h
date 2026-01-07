@@ -34,11 +34,17 @@ struct TagBuffer {
     uint32_t tag_id;
     ValueType value_type;
     TimeUnit time_unit;
+    EncodingType encoding_type;  // Compression/encoding method
     int64_t start_ts_us;         // Base timestamp
     std::vector<MemRecord> records;
 
+    // Encoding parameters (interpretation depends on encoding_type)
+    double encoding_tolerance;           // For ENC_SWINGING_DOOR: tolerance value
+    double encoding_compression_factor;  // For ENC_SWINGING_DOOR: compression factor
+
     TagBuffer() : tag_id(0), value_type(ValueType::VT_F64),
-                  time_unit(TimeUnit::TU_MS), start_ts_us(0) {}
+                  time_unit(TimeUnit::TU_MS), encoding_type(EncodingType::ENC_RAW),
+                  start_ts_us(0), encoding_tolerance(0.0), encoding_compression_factor(1.0) {}
 };
 
 class MemBuffer {

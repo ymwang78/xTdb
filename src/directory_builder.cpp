@@ -64,7 +64,10 @@ DirBuildResult DirectoryBuilder::sealBlock(uint32_t block_index,
                                           TimeUnit time_unit,
                                           ValueType value_type,
                                           uint32_t record_count,
-                                          uint32_t data_crc32) {
+                                          uint32_t data_crc32,
+                                          EncodingType encoding_type,
+                                          uint32_t encoding_param1,
+                                          uint32_t encoding_param2) {
     // Validate block index
     if (block_index >= layout_.data_blocks) {
         setError("Invalid block index");
@@ -84,8 +87,11 @@ DirBuildResult DirectoryBuilder::sealBlock(uint32_t block_index,
     entry.end_ts_us = end_ts_us;
     entry.time_unit = static_cast<uint8_t>(time_unit);
     entry.value_type = static_cast<uint8_t>(value_type);
+    entry.encoding_type = static_cast<uint8_t>(encoding_type);
     entry.record_count = record_count;
     entry.data_crc32 = data_crc32;
+    entry.encoding_param1 = encoding_param1;
+    entry.encoding_param2 = encoding_param2;
 
     // Note: padding is already zeroed by constructor
 
