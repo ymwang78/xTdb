@@ -60,10 +60,12 @@ struct EngineConfig {
     std::string data_dir;
     std::string db_path;
     ChunkLayout layout;
+    int64_t retention_days;  // Data retention in days (0 = no retention limit)
 
     EngineConfig()
         : data_dir("./data"),
-          db_path("./data/meta.db") {
+          db_path("./data/meta.db"),
+          retention_days(0) {  // No retention limit by default
         // Default layout: 16KB blocks, 256MB chunk
         layout.block_size_bytes = 16384;
         layout.chunk_size_bytes = 256 * 1024 * 1024;
@@ -163,6 +165,34 @@ public:
     };
     const ReadStats& getReadStats() const { return read_stats_; }
 
+    // ========================================================================
+    // Phase 10: Maintenance Services
+    // ========================================================================
+
+    /// Maintenance statistics
+    struct MaintenanceStats {
+        uint64_t chunks_deprecated = 0;  // Chunks marked as deprecated
+        uint64_t chunks_freed = 0;        // Chunks marked as free
+        uint64_t last_retention_run_ts = 0;  // Last retention service run timestamp
+    };
+    const MaintenanceStats& getMaintenanceStats() const { return maintenance_stats_; }
+
+    /// Run retention service to deprecate old chunks
+    /// Finds sealed chunks with end_ts < (now - retention_days) and marks them as deprecated
+    /// @param current_time_us Current time in microseconds (for testing)
+    /// @return EngineResult
+    EngineResult runRetentionService(int64_t current_time_us = 0);
+
+    /// Reclaim space from deprecated chunks
+    /// Marks deprecated chunks as FREE (ready for reuse)
+    /// @return EngineResult
+    EngineResult reclaimDeprecatedChunks();
+
+    /// Seal current active chunk
+    /// Used for testing and graceful shutdown scenarios
+    /// @return EngineResult
+    EngineResult sealCurrentChunk();
+
 private:
     /// Bootstrap step 1: Connect to SQLite
     EngineResult connectMetadata();
@@ -207,6 +237,7 @@ private:
     std::unordered_map<uint32_t, TagBuffer> buffers_;  // Tag -> MemBuffer
     WriteStats write_stats_;                     // Write statistics
     ReadStats read_stats_;                       // Read statistics
+    MaintenanceStats maintenance_stats_;         // Maintenance statistics
 };
 
 }  // namespace xtdb

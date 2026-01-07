@@ -52,6 +52,7 @@ SyncResult MetadataSync::initSchema() {
     std::string create_chunks = R"(
         CREATE TABLE IF NOT EXISTS chunks (
             chunk_id INTEGER PRIMARY KEY,
+            container_id INTEGER NOT NULL DEFAULT 0,
             chunk_offset INTEGER NOT NULL,
             start_ts_us INTEGER NOT NULL,
             end_ts_us INTEGER NOT NULL,
@@ -108,8 +109,8 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
     sqlite3_stmt* stmt = nullptr;
     std::string insert_chunk = R"(
         INSERT OR REPLACE INTO chunks
-        (chunk_id, chunk_offset, start_ts_us, end_ts_us, super_crc32, is_sealed, block_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        (chunk_id, container_id, chunk_offset, start_ts_us, end_ts_us, super_crc32, is_sealed, block_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     )";
 
     int rc = sqlite3_prepare_v2(db_, insert_chunk.c_str(), -1, &stmt, nullptr);
@@ -120,12 +121,13 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
     }
 
     sqlite3_bind_int(stmt, 1, scanned_chunk.chunk_id);
-    sqlite3_bind_int64(stmt, 2, chunk_offset);
-    sqlite3_bind_int64(stmt, 3, scanned_chunk.start_ts_us);
-    sqlite3_bind_int64(stmt, 4, scanned_chunk.end_ts_us);
-    sqlite3_bind_int(stmt, 5, scanned_chunk.super_crc32);
-    sqlite3_bind_int(stmt, 6, scanned_chunk.is_sealed ? 1 : 0);
-    sqlite3_bind_int(stmt, 7, scanned_chunk.blocks.size());
+    sqlite3_bind_int(stmt, 2, 0);  // container_id = 0
+    sqlite3_bind_int64(stmt, 3, chunk_offset);
+    sqlite3_bind_int64(stmt, 4, scanned_chunk.start_ts_us);
+    sqlite3_bind_int64(stmt, 5, scanned_chunk.end_ts_us);
+    sqlite3_bind_int(stmt, 6, scanned_chunk.super_crc32);
+    sqlite3_bind_int(stmt, 7, scanned_chunk.is_sealed ? 1 : 0);
+    sqlite3_bind_int(stmt, 8, scanned_chunk.blocks.size());
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -349,6 +351,120 @@ SyncResult MetadataSync::getAllTags(std::vector<uint32_t>& tag_ids) {
 
 void MetadataSync::setError(const std::string& message) {
     last_error_ = message;
+}
+
+// ============================================================================
+// Phase 10: Retention Service Support
+// ============================================================================
+
+SyncResult MetadataSync::querySealedChunks(uint32_t container_id,
+                                          int64_t min_end_ts,
+                                          int64_t max_end_ts,
+                                          std::function<void(uint32_t, uint64_t, int64_t, int64_t)> callback) {
+    if (!db_) {
+        setError("Database not open");
+        return SyncResult::ERROR_DB_OPEN_FAILED;
+    }
+
+    // Query chunks table for sealed chunks in time range
+    const char* sql = "SELECT chunk_id, chunk_offset, start_ts_us, end_ts_us "
+                     "FROM chunks "
+                     "WHERE container_id = ? AND is_sealed = 1 ";
+
+    std::string query = sql;
+    if (min_end_ts > 0) {
+        query += "AND end_ts_us >= ? ";
+    }
+    if (max_end_ts > 0) {
+        query += "AND end_ts_us <= ? ";
+    }
+    query += "ORDER BY end_ts_us ASC";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare query: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERROR_DB_PREPARE_FAILED;
+    }
+
+    // Bind parameters
+    int bind_index = 1;
+    sqlite3_bind_int(stmt, bind_index++, container_id);
+    if (min_end_ts > 0) {
+        sqlite3_bind_int64(stmt, bind_index++, min_end_ts);
+    }
+    if (max_end_ts > 0) {
+        sqlite3_bind_int64(stmt, bind_index++, max_end_ts);
+    }
+
+    // Execute and call callback for each row
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        uint32_t chunk_id = sqlite3_column_int(stmt, 0);
+        uint64_t chunk_offset = sqlite3_column_int64(stmt, 1);
+        int64_t start_ts = sqlite3_column_int64(stmt, 2);
+        int64_t end_ts = sqlite3_column_int64(stmt, 3);
+
+        callback(chunk_id, chunk_offset, start_ts, end_ts);
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        setError("Query execution failed: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERROR_DB_EXEC_FAILED;
+    }
+
+    return SyncResult::SUCCESS;
+}
+
+SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
+    if (!db_) {
+        setError("Database not open");
+        return SyncResult::ERROR_DB_OPEN_FAILED;
+    }
+
+    // Delete from chunks table
+    const char* sql = "DELETE FROM chunks WHERE container_id = ? AND chunk_id = ?";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare delete: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERROR_DB_PREPARE_FAILED;
+    }
+
+    sqlite3_bind_int(stmt, 1, container_id);
+    sqlite3_bind_int(stmt, 2, chunk_id);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        setError("Delete execution failed: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERROR_DB_EXEC_FAILED;
+    }
+
+    // Also delete related blocks
+    // Note: In production, this should use foreign key cascades
+    const char* block_sql = "DELETE FROM blocks WHERE chunk_id = ?";
+
+    rc = sqlite3_prepare_v2(db_, block_sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare block delete: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERROR_DB_PREPARE_FAILED;
+    }
+
+    sqlite3_bind_int(stmt, 1, chunk_id);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        setError("Block delete execution failed: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERROR_DB_EXEC_FAILED;
+    }
+
+    return SyncResult::SUCCESS;
 }
 
 }  // namespace xtdb

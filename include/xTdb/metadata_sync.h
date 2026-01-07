@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <functional>
 #include <sqlite3.h>
 
 namespace xtdb {
@@ -101,6 +102,30 @@ public:
     /// @param tag_ids Output: all tag IDs
     /// @return SyncResult
     SyncResult getAllTags(std::vector<uint32_t>& tag_ids);
+
+    // ========================================================================
+    // Phase 10: Retention Service Support
+    // ========================================================================
+
+    /// Query sealed chunks within time range
+    /// @param container_id Container ID
+    /// @param min_end_ts Minimum end timestamp (0 = no minimum)
+    /// @param max_end_ts Maximum end timestamp (cutoff for retention)
+    /// @param callback Callback function called for each matching chunk
+    /// @return SyncResult
+    SyncResult querySealedChunks(uint32_t container_id,
+                                int64_t min_end_ts,
+                                int64_t max_end_ts,
+                                std::function<void(uint32_t chunk_id,
+                                                  uint64_t chunk_offset,
+                                                  int64_t start_ts,
+                                                  int64_t end_ts)> callback);
+
+    /// Delete chunk metadata from database
+    /// @param container_id Container ID
+    /// @param chunk_id Chunk ID
+    /// @return SyncResult
+    SyncResult deleteChunk(uint32_t container_id, uint32_t chunk_id);
 
     /// Get last error message
     const std::string& getLastError() const { return last_error_; }
