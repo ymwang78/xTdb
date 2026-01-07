@@ -45,3 +45,4 @@ if [ "$1" == "--test" ] || [ "$1" == "-t" ]; then
 fi
 
 echo -e "${GREEN}Done!${NC}"
+
