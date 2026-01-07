@@ -39,6 +39,7 @@ add_library(xtdb_core
     src/aligned_io.cpp
     src/state_mutator.cpp
     src/wal_writer.cpp
+    src/wal_reader.cpp
     src/mem_buffer.cpp
     src/block_writer.cpp
     src/directory_builder.cpp

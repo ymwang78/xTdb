@@ -10,6 +10,8 @@
 #include "raw_scanner.h"
 #include "block_reader.h"
 #include "state_mutator.h"
+#include "wal_writer.h"
+#include "wal_reader.h"
 #include "struct_defs.h"
 #include <string>
 #include <vector>
@@ -230,6 +232,8 @@ private:
     std::unique_ptr<MetadataSync> metadata_;     // SQLite connection
     std::unique_ptr<StateMutator> mutator_;      // State machine
     std::unique_ptr<DirectoryBuilder> dir_builder_;  // Active chunk directory
+    std::unique_ptr<WALWriter> wal_writer_;      // WAL writer
+    std::unique_ptr<WALReader> wal_reader_;      // WAL reader
 
     // Runtime state
     std::vector<ContainerInfo> containers_;      // All mounted containers
@@ -238,6 +242,7 @@ private:
     WriteStats write_stats_;                     // Write statistics
     ReadStats read_stats_;                       // Read statistics
     MaintenanceStats maintenance_stats_;         // Maintenance statistics
+    uint32_t wal_entries_since_sync_;            // Entries written since last WAL sync
 };
 
 }  // namespace xtdb

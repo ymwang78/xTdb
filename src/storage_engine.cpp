@@ -12,7 +12,7 @@
 namespace xtdb {
 
 StorageEngine::StorageEngine(const EngineConfig& config)
-    : config_(config), is_open_(false) {
+    : config_(config), is_open_(false), wal_entries_since_sync_(0) {
     // If layout not specified by user, calculate default layout based on RAW_16K
     if (config_.layout.block_size_bytes == 0 || config_.layout.chunk_size_bytes == 0) {
         config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K);
@@ -70,8 +70,14 @@ void StorageEngine::close() {
         return;
     }
 
-    // Clear directory builder and mutator BEFORE closing I/O
-    // (they hold raw pointers to io_)
+    // Sync WAL before closing
+    if (wal_writer_) {
+        wal_writer_->sync();
+    }
+
+    // Clear WAL and other components BEFORE closing I/O
+    wal_writer_.reset();
+    wal_reader_.reset();
     dir_builder_.reset();
     mutator_.reset();
 
@@ -149,6 +155,18 @@ EngineResult StorageEngine::mountContainers() {
             return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
         }
 
+        // Initialize WAL region (extent 1-256, 4 MB total)
+        // Zero-fill the WAL region so it's ready for use
+        AlignedBuffer zero_buf(kExtentSizeBytes);
+        std::memset(zero_buf.data(), 0, kExtentSizeBytes);
+        for (uint32_t i = 1; i <= 256; i++) {
+            io_result = io_->write(zero_buf.data(), kExtentSizeBytes, i * kExtentSizeBytes);
+            if (io_result != IOResult::SUCCESS) {
+                setError("Failed to initialize WAL region: " + io_->getLastError());
+                return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+            }
+        }
+
         // Register container
         ContainerInfo info;
         info.container_id = 0;
@@ -156,31 +174,37 @@ EngineResult StorageEngine::mountContainers() {
         info.capacity_bytes = header.capacity_extents * kExtentSizeBytes;
         info.layout = config_.layout;
         containers_.push_back(info);
+    }
+    else {
+        // Container exists, verify header
+        io_ = std::make_unique<AlignedIO>();
+        IOResult io_result = io_->open(container_path, false, false);  // Don't create, read/write
+        if (io_result != IOResult::SUCCESS) {
+            setError("Failed to open container: " + io_->getLastError());
+            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        }
 
-        return EngineResult::SUCCESS;
+        ContainerHeaderV12 header;
+        EngineResult result = verifyContainerHeader(container_path, header);
+        if (result != EngineResult::SUCCESS) {
+            return result;
+        }
+
+        // Register container
+        ContainerInfo info;
+        info.container_id = 0;
+        info.file_path = container_path;
+        info.capacity_bytes = header.capacity_extents * kExtentSizeBytes;
+        info.layout = config_.layout;
+        containers_.push_back(info);
     }
 
-    // Container exists, verify header
-    io_ = std::make_unique<AlignedIO>();
-    IOResult io_result = io_->open(container_path, false, false);  // Don't create, read/write
-    if (io_result != IOResult::SUCCESS) {
-        setError("Failed to open container: " + io_->getLastError());
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
-    }
+    // Initialize WAL (Write-Ahead Log)
+    // WAL region: starts after container header (extent 0), size 4 MB (256 extents)
+    uint64_t wal_offset = kExtentSizeBytes;  // After container header
+    uint64_t wal_size = 256 * kExtentSizeBytes;  // 4 MB
 
-    ContainerHeaderV12 header;
-    EngineResult result = verifyContainerHeader(container_path, header);
-    if (result != EngineResult::SUCCESS) {
-        return result;
-    }
-
-    // Register container
-    ContainerInfo info;
-    info.container_id = 0;
-    info.file_path = container_path;
-    info.capacity_bytes = header.capacity_extents * kExtentSizeBytes;
-    info.layout = config_.layout;
-    containers_.push_back(info);
+    wal_writer_ = std::make_unique<WALWriter>(io_.get(), wal_offset, wal_size);
 
     return EngineResult::SUCCESS;
 }
@@ -194,9 +218,9 @@ EngineResult StorageEngine::restoreActiveState() {
     // This is simplified for Phase 7 - full implementation would query SQLite for active chunks
 
     // Initialize active chunk info
-    // First chunk at offset kExtentSizeBytes corresponds to chunk_id = 0
+    // First chunk starts after WAL region (extent 0 = header, extents 1-256 = WAL, extent 257+ = data)
     active_chunk_.chunk_id = 0;
-    active_chunk_.chunk_offset = kExtentSizeBytes;  // After container header
+    active_chunk_.chunk_offset = 257 * kExtentSizeBytes;  // After container header and WAL region
     active_chunk_.blocks_used = 0;
     active_chunk_.blocks_total = config_.layout.data_blocks;
     active_chunk_.start_ts_us = 0;
@@ -255,16 +279,87 @@ EngineResult StorageEngine::restoreActiveState() {
 }
 
 EngineResult StorageEngine::replayWAL() {
-    // WAL integration is complex and requires container-based storage
-    // For Phase 7, we simplify by skipping WAL replay
-    // WAL would be stored within the container file, not as a separate file
-    // This will be fully implemented in Phase 8
+    if (!wal_writer_ || !io_) {
+        setError("WAL writer or I/O not initialized");
+        return EngineResult::ERROR_WAL_OPEN_FAILED;
+    }
 
-    // TODO Phase 8: Implement full WAL replay with container-based storage
-    // - Allocate WAL region in container
-    // - Create WALWriter with proper offset/size
-    // - Read and replay entries
-    // - Truncate after successful replay
+    // Create WAL reader
+    uint64_t wal_offset = kExtentSizeBytes;  // After container header
+    uint64_t wal_size = 256 * kExtentSizeBytes;  // 4 MB
+
+    wal_reader_ = std::make_unique<WALReader>(io_.get(), wal_offset, wal_size);
+
+    // Read and replay all WAL entries
+    WALEntry entry;
+    uint64_t entries_replayed = 0;
+    bool first_read = true;
+
+    while (true) {
+        WALResult result = wal_reader_->readNext(entry);
+
+        if (result == WALResult::ERROR_INVALID_ENTRY) {
+            // End of valid entries (EOF or corrupted entry)
+            break;
+        }
+
+        if (result != WALResult::SUCCESS) {
+            // If first read fails, assume fresh database with no WAL to replay
+            if (first_read) {
+                // No WAL entries to replay (fresh database)
+                break;
+            }
+            // Otherwise, it's a real error
+            setError("WAL read failed: " + wal_reader_->getLastError());
+            return EngineResult::ERROR_WAL_REPLAY_FAILED;
+        }
+
+        first_read = false;
+
+        // DEBUG: Log replayed entry
+        // std::cerr << "Replaying WAL entry: tag_id=" << entry.tag_id
+        //           << ", timestamp=" << entry.timestamp_us
+        //           << ", value_type=" << static_cast<int>(entry.value_type) << std::endl;
+
+        // Replay entry to memory buffer
+        uint32_t tag_id = entry.tag_id;
+
+        // Find or create buffer for this tag
+        auto it = buffers_.find(tag_id);
+        if (it == buffers_.end()) {
+            // Create new buffer
+            TagBuffer new_buffer;
+            new_buffer.tag_id = tag_id;
+            new_buffer.value_type = static_cast<ValueType>(entry.value_type);
+            new_buffer.time_unit = TimeUnit::TU_MS;
+            new_buffer.start_ts_us = entry.timestamp_us;
+            buffers_[tag_id] = new_buffer;
+            it = buffers_.find(tag_id);
+        }
+
+        // Add record to buffer
+        TagBuffer& tag_buffer = it->second;
+
+        // Create MemRecord
+        MemRecord record;
+        record.time_offset = static_cast<uint32_t>((entry.timestamp_us - tag_buffer.start_ts_us) / 1000);  // Convert to ms
+        record.quality = entry.quality;
+        record.value.f64_value = entry.value.f64_value;
+        tag_buffer.records.push_back(record);
+
+        entries_replayed++;
+    }
+
+    // Note: Replayed data is now in memory buffers
+    // It will be flushed to disk when the user explicitly calls flush()
+    // or when buffers fill up during normal write operations
+    // We don't call flush() here because the engine isn't fully open yet
+
+    // Reset WAL to clear replayed entries
+    if (entries_replayed > 0) {
+        wal_writer_->reset();
+        wal_entries_since_sync_ = 0;
+    }
 
     return EngineResult::SUCCESS;
 }
@@ -382,16 +477,30 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     }
 
     // Step 1: WAL Append (for crash recovery)
-    // TODO Phase 8: Implement WAL append
-    // For now, we skip WAL and focus on buffer management
-
-    // Step 2: Add point to memory buffer through WAL entry
     WALEntry entry;
     entry.tag_id = tag_id;
     entry.timestamp_us = timestamp_us;
     entry.value_type = static_cast<uint8_t>(ValueType::VT_F64);
     entry.value.f64_value = value;
     entry.quality = quality;
+
+    // Write to WAL
+    if (wal_writer_) {
+        WALResult wal_result = wal_writer_->append(entry);
+        if (wal_result != WALResult::SUCCESS) {
+            setError("WAL append failed: " + wal_writer_->getLastError());
+            return EngineResult::ERROR_WAL_OPEN_FAILED;
+        }
+
+        // Periodic WAL sync (every 1000 entries)
+        wal_entries_since_sync_++;
+        if (wal_entries_since_sync_ >= 1000) {
+            wal_writer_->sync();
+            wal_entries_since_sync_ = 0;
+        }
+    }
+
+    // Step 2: Add point to memory buffer
 
     // Find or create MemBuffer for this tag
     auto it = buffers_.find(tag_id);
@@ -559,6 +668,12 @@ EngineResult StorageEngine::flush() {
 
         // Clear buffer after successful write
         tag_buffer.records.clear();
+    }
+
+    // Clear WAL after successful flush - data is now safely on disk
+    if (wal_writer_) {
+        wal_writer_->reset();
+        wal_entries_since_sync_ = 0;
     }
 
     return EngineResult::SUCCESS;

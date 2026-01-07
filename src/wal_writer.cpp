@@ -120,6 +120,16 @@ WALResult WALWriter::reset() {
         return result;
     }
 
+    // Zero out the first extent of WAL to mark it as empty
+    // This ensures that on restart, WAL replay will immediately see an invalid entry
+    AlignedBuffer zero_buf(kExtentSizeBytes);
+    std::memset(zero_buf.data(), 0, kExtentSizeBytes);
+    IOResult io_result = io_->write(zero_buf.data(), kExtentSizeBytes, wal_start_offset_);
+    if (io_result != IOResult::SUCCESS) {
+        setError("Failed to clear WAL region");
+        return WALResult::ERROR_IO_FAILED;
+    }
+
     // Reset write position
     current_offset_ = wal_start_offset_;
     buffer_used_ = 0;

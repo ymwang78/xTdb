@@ -82,9 +82,10 @@ TEST_F(RestartConsistencyTest, ActiveChunkAllocation) {
     EXPECT_EQ(EngineResult::SUCCESS, result);
 
     // Check active chunk (starts at chunk_id 0 for fresh database)
+    // First chunk now starts at extent 257 (after WAL region: extent 0=header, extents 1-256=WAL)
     const auto& active_chunk = engine.getActiveChunk();
     EXPECT_EQ(0u, active_chunk.chunk_id);
-    EXPECT_EQ(kExtentSizeBytes, active_chunk.chunk_offset);
+    EXPECT_EQ(257 * kExtentSizeBytes, active_chunk.chunk_offset);
     EXPECT_EQ(0u, active_chunk.blocks_used);
     EXPECT_GT(active_chunk.blocks_total, 0u);
 
@@ -118,9 +119,10 @@ TEST_F(RestartConsistencyTest, T10_RestartConsistency) {
     ASSERT_EQ(EngineResult::SUCCESS, result);
 
     // Verify active chunk is created (starts at chunk_id 0 for fresh database)
+    // First chunk now starts at extent 257 (after WAL region)
     const auto& active_chunk = engine.getActiveChunk();
     EXPECT_EQ(0u, active_chunk.chunk_id);
-    EXPECT_EQ(kExtentSizeBytes, active_chunk.chunk_offset);
+    EXPECT_EQ(257 * kExtentSizeBytes, active_chunk.chunk_offset);
 
     // Verify files exist
     EXPECT_TRUE(fs::exists(config_.data_dir + "/container_0.raw"));
