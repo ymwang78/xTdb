@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(xTdb VERSION 1.6.0 LANGUAGES CXX)
+project(xTdb VERSION 1.6.0 LANGUAGES C CXX)
 
 # ============================================================================
 # C++ Standard
@@ -56,6 +56,41 @@ target_include_directories(xtdb_core PUBLIC
 target_link_libraries(xtdb_core PUBLIC
     SQLite::SQLite3
 )
+
+# ============================================================================
+# Library: xTdb C API (Phase 11)
+# ============================================================================
+add_library(xtdb_api
+    src/xtdb_api.cpp
+)
+
+target_include_directories(xtdb_api PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(xtdb_api PUBLIC
+    xtdb_core
+)
+
+# ============================================================================
+# Examples
+# ============================================================================
+option(BUILD_EXAMPLES "Build examples" ON)
+
+if(BUILD_EXAMPLES)
+    # Example: C API Usage
+    add_executable(api_example
+        examples/api_example.c
+    )
+    set_target_properties(api_example PROPERTIES
+        LINKER_LANGUAGE C
+    )
+    target_link_libraries(api_example
+        xtdb_api
+        pthread
+    )
+    message(STATUS "Examples enabled: api_example")
+endif()
 
 # ============================================================================
 # Testing
@@ -230,11 +265,15 @@ endif()
 # ============================================================================
 # Installation (optional)
 # ============================================================================
-install(TARGETS xtdb_core
+install(TARGETS xtdb_core xtdb_api
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
 
 install(DIRECTORY include/xTdb
     DESTINATION include
+)
+
+install(FILES include/xTdb/xtdb_api.h
+    DESTINATION include/xTdb
 )

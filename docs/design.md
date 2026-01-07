@@ -359,24 +359,107 @@ data_blocks = BLOCKS_PER_CHUNK - meta_blocks
 
 ---
 
-## 12. SQLite 元数据索引（V1.2）
+## 12. SQLite 元数据索引（V1.6）
 
 为加速查询镜像存放；事实源仍可由集中目录扫描重建。
 
-建议关键字段新增：`raw_block_class` 或 `block_size_extents`（二者选其一；通常存 class 即可）。
+### 12.1 Tags 表（核心元数据）
+
+Tags 表存储每个测点（Tag）的元数据，包括基本信息、压缩配置、预处理策略等：
+
+```sql
+-- Tags 主表（包含压缩配置）
+CREATE TABLE IF NOT EXISTS tags (
+    tag_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Tag 基本信息
+    tag_name            TEXT NOT NULL UNIQUE,     -- 测点名称（如 "T101_Temperature"）
+    tag_desc            TEXT,                     -- 描述（如 "反应釜温度"）
+
+    -- 数据类型与单位
+    value_type          INTEGER NOT NULL,         -- ValueType 枚举：1=BOOL, 2=I32, 3=F32, 4=F64
+    unit                TEXT,                     -- 工程单位（如 "℃", "MPa", "m³/h"）
+
+    -- 物理量程（用于 16-bit 量化压缩）
+    low_extreme         REAL,                     -- 物理下限（如 0.0）
+    high_extreme        REAL,                     -- 物理上限（如 500.0）
+
+    -- 压缩配置
+    preferred_encoding  INTEGER DEFAULT 0,        -- EncodingType：0=RAW, 1=SWINGING_DOOR, 2=QUANTIZED_16
+    tolerance           REAL,                     -- Swinging Door 工程容差（物理单位，如 1.0℃）
+    compression_factor  REAL DEFAULT 1.0,         -- 压缩因子（1.0 = 使用 tolerance 原值）
+
+    -- 预处理策略
+    enable_gross_error_removal BOOLEAN DEFAULT 0, -- 启用毛刺剔除
+    gross_error_stddev         REAL DEFAULT 3.0,  -- 标准差倍数（3σ 原则）
+
+    enable_smoothing           BOOLEAN DEFAULT 0, -- 启用指数平滑
+    smoothing_alpha            REAL DEFAULT 0.2,  -- 平滑系数 α (0-1)
+
+    enable_deadband            BOOLEAN DEFAULT 0, -- 启用死区
+    deadband_value             REAL,              -- 死区值（绝对值）
+
+    -- BlockClass 偏好（用于自适应升级）
+    preferred_block_class INTEGER DEFAULT 1,      -- 1=RAW16K, 2=RAW64K, 3=RAW256K
+
+    -- 元数据
+    created_ts_us       INTEGER NOT NULL,         -- 创建时间（微秒）
+    updated_ts_us       INTEGER NOT NULL,         -- 最后更新时间（微秒）
+
+    -- 约束
+    CHECK (value_type >= 1 AND value_type <= 4),
+    CHECK (preferred_encoding >= 0 AND preferred_encoding <= 7),
+    CHECK (low_extreme IS NULL OR high_extreme IS NULL OR low_extreme < high_extreme)
+);
+
+-- 索引
+CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(tag_name);
+CREATE INDEX IF NOT EXISTS idx_tags_encoding ON tags(preferred_encoding);
+```
+
+**字段说明**：
+
+- **基本信息**：
+  - `tag_name`：唯一的测点名称，推荐使用层次化命名（如 "Plant1.Unit2.T101"）
+  - `tag_desc`：人类可读的描述
+  - `value_type`：数据类型（1=BOOL, 2=I32, 3=F32, 4=F64）
+  - `unit`：工程单位字符串
+
+- **压缩配置**（PHD 兼容）：
+  - `low_extreme` / `high_extreme`：物理量程，用于 16-bit 量化压缩
+  - `preferred_encoding`：优先使用的编码方式
+  - `tolerance`：Swinging Door 算法的工程容差
+  - `compression_factor`：容差倍数调整
+
+- **预处理策略**：
+  - 毛刺剔除（Gross Error Removal）
+  - 指数平滑（Exponential Smoothing）
+  - 死区/Gating（Deadband）
+
+- **性能优化**：
+  - `preferred_block_class`：优先使用的 Block 尺寸（根据数据频率自动调整）
+
+### 12.2 Containers 表
 
 ```sql
 CREATE TABLE IF NOT EXISTS containers (
-    container_id       INTEGER PRIMARY KEY,
-    container_path     TEXT    NOT NULL,
-    layout             INTEGER NOT NULL,  -- 1=RAW_FIXED 2=COMPACT_VAR
-    capacity_type      INTEGER NOT NULL,  -- 1=DYNAMIC 2=FIXED
-    capacity_extents   INTEGER,
-    raw_block_class    INTEGER,           -- RAW: 1=16K 2=64K 3=256K
-    chunk_size_extents INTEGER,           -- RAW: fixed
-    block_size_extents INTEGER,           -- RAW: fixed
-    flags              INTEGER NOT NULL,
-    created_ts_us      INTEGER NOT NULL
+    container_id            INTEGER PRIMARY KEY,
+    container_path          TEXT    NOT NULL,
+    layout                  INTEGER NOT NULL,  -- 1=RAW_FIXED 2=COMPACT_VAR
+    capacity_type           INTEGER NOT NULL,  -- 1=DYNAMIC 2=FIXED
+    capacity_extents        INTEGER,
+
+    -- RAW parameters
+    raw_block_class         INTEGER,           -- RAW: 1=16K 2=64K 3=256K
+    chunk_size_extents      INTEGER,           -- RAW: fixed chunk size (in extents)
+    block_size_extents      INTEGER,           -- RAW: fixed block size (in extents)
+
+    -- Archive parameters (V1.6 新增)
+    archive_level           INTEGER DEFAULT 0, -- 0=RAW, 1=RESAMPLED_1M, 2=RESAMPLED_1H, 3=AGGREGATED
+    resampling_interval_us  INTEGER,           -- 重采样间隔（微秒），0=不重采样
+
+    flags                   INTEGER NOT NULL,
+    created_ts_us           INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -394,27 +477,40 @@ CREATE TABLE IF NOT EXISTS chunks (
     PRIMARY KEY (container_id, chunk_id),
 );
 
--- 推荐：按月分表 blocks_202310
--- 注意：不需要 FOREIGN KEY，在大规模分表场景下 FK 会极大拖累性能且难以维护
-CREATE TABLE IF NOT EXISTS blocks_202310 (
+### 12.3 Blocks 表（按月分表）
+
+推荐：按月分表 blocks_YYYYMM，避免单表过大影响性能。
+
+注意：不需要 FOREIGN KEY，在大规模分表场景下 FK 会极大拖累性能且难以维护。
+
+```sql
+CREATE TABLE IF NOT EXISTS blocks_202601 (
     -- 1. 核心查询键
-    tag_id       INTEGER NOT NULL,
-    start_ts_us  INTEGER NOT NULL,
-    end_ts_us    INTEGER NOT NULL, -- 保留结束时间，用于时间范围查询的精确过滤
+    tag_id       INTEGER NOT NULL,        -- 关联 tags.tag_id
+    start_ts_us  INTEGER NOT NULL,        -- 起始时间（微秒）
+    end_ts_us    INTEGER NOT NULL,        -- 结束时间（用于时间范围过滤）
 
-    -- 2. 物理定位键 (你的修改)
-    container_id INTEGER NOT NULL,
-    chunk_id     INTEGER NOT NULL,
-    block_index  INTEGER NOT NULL, -- = offset / 16384 (直接存第几块)
+    -- 2. 物理定位键
+    container_id INTEGER NOT NULL,        -- 关联 containers.container_id
+    chunk_id     INTEGER NOT NULL,        -- Chunk 槽位 ID
+    block_index  INTEGER NOT NULL,        -- Block 索引（第几个 block）
 
-    -- 3. 主键 (聚簇索引，加速查询)
+    -- 3. 编码信息（V1.6 新增，冗余存储以加速查询）
+    encoding_type INTEGER DEFAULT 0,      -- EncodingType（0=RAW, 1=SWINGING_DOOR, 2=QUANTIZED_16）
+    record_count  INTEGER,                -- 记录数（冗余，来自 BlockDirEntry）
+
+    -- 4. 主键（聚簇索引，加速按 tag+time 查询）
     PRIMARY KEY (tag_id, start_ts_us)
 ) WITHOUT ROWID;
 
--- 4. 辅助索引 (加速运维/回收)
--- 当你要删除某个 Chunk 时，这个索引让 DELETE 操作瞬间完成
-CREATE INDEX IF NOT EXISTS idx_blocks_202310_gc 
-ON blocks_202310(container_id, chunk_id);
+-- 辅助索引：加速运维/回收操作
+-- 当删除某个 Chunk 时，这个索引让 DELETE 操作瞬间完成
+CREATE INDEX IF NOT EXISTS idx_blocks_202601_gc
+ON blocks_202601(container_id, chunk_id);
+
+-- 辅助索引：加速按时间范围查询
+CREATE INDEX IF NOT EXISTS idx_blocks_202601_time
+ON blocks_202601(start_ts_us, end_ts_us);
 ```
 
 ---

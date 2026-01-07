@@ -4,17 +4,27 @@
 
 ## 项目状态
 
-✅ **阶段1完成**：物理层与布局管理器
-- AlignedIO（16KB 对齐 I/O）
-- LayoutCalculator（偏移量计算）
-- 22个单元测试全部通过
+✅ **Phase 1-10 完成**：核心存储引擎
+- 物理层与布局管理（AlignedIO, LayoutCalculator）
+- 头部定义与状态机（ContainerHeader, StateMutator）
+- 写入路径（WAL, MemBuffer, BlockWriter）
+- Seal 与目录构建（DirectoryBuilder, ChunkSealer）
+- 读取与恢复（RawScanner, BlockReader）
+- SQLite 集成（MetadataSync）
+- 全局初始化与启动（Bootstrap Sequence）
+- 写路径编排（WriteCoordinator）
+- 读路径编排（ReadCoordinator）
+- 后台服务（RetentionService, ChunkReclamation）
 
-✅ **阶段2完成**：头部定义与状态机
-- ContainerHeader / RawChunkHeader / BlockDirEntry 结构体定义
-- StateMutator（Active-low 状态机，SSD 友好）
-- 25个单元测试全部通过
+✅ **Phase 11 完成**：Public C API (2026-01-07)
+- 25+ C API 函数，涵盖所有核心操作
+- 线程安全，opaque handle 设计
+- 完整示例和文档（examples/api_example.c）
 
-🔄 **进行中**：阶段3 - 写入路径（WAL + BlockWriter）
+🎯 **下一步**：Phase 12+ - PHD 压缩特性集成
+- Swinging Door 压缩算法
+- 16-bit 量化
+- 多分辨率 Archive
 
 ## 核心特性
 
@@ -79,9 +89,59 @@ Test project /home/admin/cxxproj/xTdb/build
 Total Test time (real) =   0.13 sec
 ```
 
-## API 使用示例
+## API 使用
 
-### 1. AlignedIO - 对齐 I/O 操作
+### C API (推荐 - Phase 11)
+
+xTdb 提供完整的 C API，支持跨语言集成（Python, Go, Rust 等）：
+
+```c
+#include <xTdb/xtdb_api.h>
+
+// 1. 打开数据库
+xtdb_config_t config;
+xtdb_config_init(&config);
+config.data_dir = "./my_data";
+config.retention_days = 30;
+
+xtdb_handle_t db = NULL;
+xtdb_error_t err = xtdb_open(&config, &db);
+if (err != XTDB_SUCCESS) {
+    fprintf(stderr, "Error: %s\n", xtdb_error_string(err));
+    return 1;
+}
+
+// 2. 写入数据
+xtdb_point_t point = {
+    .tag_id = 1001,
+    .timestamp_us = get_current_time_us(),
+    .value = 25.5,
+    .quality = 192
+};
+xtdb_write_point(db, &point);
+xtdb_flush(db);
+
+// 3. 查询数据
+xtdb_result_set_t result;
+xtdb_query_points(db, 1001, start_time, end_time, &result);
+
+size_t count = xtdb_result_count(result);
+for (size_t i = 0; i < count; i++) {
+    xtdb_point_t pt;
+    xtdb_result_get(result, i, &pt);
+    printf("Time: %lld, Value: %.2f\n", pt.timestamp_us, pt.value);
+}
+xtdb_result_free(result);
+
+// 4. 关闭数据库
+xtdb_close(db);
+```
+
+**更多示例**：见 `examples/api_example.c` 和 `examples/README.md`
+
+### C++ API (底层接口)
+
+#### 1. AlignedIO - 对齐 I/O 操作
 
 ```cpp
 #include "xTdb/aligned_io.h"
@@ -169,22 +229,35 @@ xTdb/
 │   ├── constants.h
 │   ├── aligned_io.h
 │   ├── layout_calculator.h
-│   ├── struct_defs.h      # ✨ 阶段2：结构体定义
-│   └── state_mutator.h    # ✨ 阶段2：状态机
+│   ├── struct_defs.h      # 结构体定义（V1.6 - 支持 PHD 压缩）
+│   ├── state_mutator.h    # 状态机
+│   ├── storage_engine.h   # Phase 7-10：全局引擎
+│   ├── xtdb_api.h         # ✨ Phase 11：C API 接口
+│   └── ...（其他组件）
 ├── src/                   # 源文件
 │   ├── aligned_io.cpp
 │   ├── layout_calculator.cpp
-│   └── state_mutator.cpp  # ✨ 阶段2
-├── tests/                 # 测试文件
+│   ├── state_mutator.cpp
+│   ├── storage_engine.cpp # Phase 7-10：引擎实现
+│   ├── xtdb_api.cpp       # ✨ Phase 11：C API 实现
+│   └── ...（其他组件）
+├── examples/              # ✨ Phase 11：示例程序
+│   ├── api_example.c      # C API 完整示例
+│   └── README.md          # 示例文档
+├── tests/                 # 测试文件（12+ 测试套件）
 │   ├── test_alignment.cpp
 │   ├── test_layout.cpp
-│   ├── test_struct_size.cpp    # ✨ 阶段2：T3
-│   └── test_state_machine.cpp  # ✨ 阶段2：T4
+│   ├── test_struct_size.cpp
+│   ├── test_maintenance.cpp  # Phase 10
+│   └── ...（其他测试）
 ├── docs/                  # 文档
 │   ├── design.md          # V1.6 设计文档
 │   ├── plan.md            # 实施计划
-│   ├── phase1_summary.md  # 阶段1总结
-│   └── phase2_summary.md  # ✨ 阶段2总结
+│   ├── phase1_summary.md  # 至 phase11_summary.md
+│   ├── phd_integration_analysis.md       # PHD 特性分析
+│   ├── phd_integration_preparation.md    # PHD 准备工作
+│   ├── phd_integration_ready.md          # PHD 集成就绪确认
+│   └── PHD_compression_and_storage_summary.md
 ├── build/                 # 构建输出（自动生成）
 ├── CMakeLists.txt         # CMake 配置
 ├── build.sh               # 构建脚本
@@ -257,34 +330,33 @@ xTdb/
 
 ## 开发路线图
 
-### ✅ 阶段1：物理层与布局管理器（已完成）
-- AlignedIO 类（16KB 对齐强制）
-- LayoutCalculator（偏移量计算）
-- T1/T2 测试通过（22个测试用例）
+### ✅ Phase 1-2：基础设施（已完成）
+- 物理层与布局管理（AlignedIO, LayoutCalculator）
+- 头部定义与状态机（Active-low 状态位）
 
-### ✅ 阶段2：头部定义与状态机（已完成）
-- ContainerHeader / RawChunkHeader / BlockDirEntry
-- StateMutator（SealBlock/SealChunk/Deprecate）
-- Active-low 状态位（SSD 友好，1→0 only）
-- T3/T4 测试通过（25个测试用例）
+### ✅ Phase 3-6：核心功能（已完成）
+- 写入路径（WAL, MemBuffer, BlockWriter）
+- Seal 与目录构建（DirectoryBuilder, ChunkSealer）
+- 读取与恢复（RawScanner, BlockReader）
+- SQLite 集成（MetadataSync）
 
-### 📋 阶段3：写入路径
-- WALWriter（写前日志）
-- MemBuffer（按 Tag 聚合）
-- BlockWriter（高吞吐写入）
+### ✅ Phase 7-10：全局引擎与编排（已完成）
+- 全局初始化与启动（Bootstrap Sequence）
+- 写路径编排（WriteCoordinator）
+- 读路径编排（ReadCoordinator）
+- 后台服务（RetentionService, ChunkReclamation）
 
-### 📋 阶段4：Seal 与目录构建
-- DirectoryBuilder（集中目录管理）
-- ChunkSealer（Chunk 封存）
+### ✅ Phase 11：公共 API 接口（2026-01-07 完成）
+- C API 设计与实现（25+ 函数）
+- 线程安全封装（per-handle mutex）
+- 示例程序与文档（examples/api_example.c）
 
-### 📋 阶段5：读取与恢复
-- RawScanner（脱库扫描工具）
-- BlockReader（数据读取）
-- 崩溃恢复测试
-
-### 📋 阶段6：SQLite 集成
-- MetadataSync（元数据同步）
-- 端到端查询测试
+### 🎯 Phase 12+：PHD 压缩特性（下一步）
+- Swinging Door 压缩算法
+- 16-bit 量化
+- 多分辨率 Archive 管理
+- 质量加权聚合
+- 预处理管道
 
 ## 性能指标
 
@@ -294,10 +366,27 @@ xTdb/
 
 ## 技术文档
 
+### 核心设计
 - **设计文档**：[docs/design.md](docs/design.md) - V1.6 完整设计规范
-- **实施计划**：[docs/plan.md](docs/plan.md) - 6阶段开发计划
-- **阶段1总结**：[docs/phase1_summary.md](docs/phase1_summary.md) - 物理层与布局管理器
-- **阶段2总结**：[docs/phase2_summary.md](docs/phase2_summary.md) - 头部定义与状态机
+- **实施计划**：[docs/plan.md](docs/plan.md) - 开发计划
+
+### Phase 总结（Phase 1-11）
+- [Phase 1: 物理层与布局管理器](docs/phase1_summary.md)
+- [Phase 2: 头部定义与状态机](docs/phase2_summary.md)
+- [Phase 3-9: 核心功能实现](docs/)
+- [Phase 10: 后台维护服务](docs/phase10_summary.md)
+- [Phase 11: 公共 C API 接口](docs/phase11_summary.md) ⭐ **最新**
+
+### PHD 压缩特性集成
+- [PHD 特性总结](docs/PHD_compression_and_storage_summary.md) - PHD 原理与机制
+- [PHD 集成分析](docs/phd_integration_analysis.md) - 特性价值评估
+- [PHD 准备工作](docs/phd_integration_preparation.md) - V1.6 结构性改造
+- [PHD 集成就绪确认](docs/phd_integration_ready.md) - 当前状态与路线图
+
+### API 文档
+- **C API 参考**：[include/xTdb/xtdb_api.h](include/xTdb/xtdb_api.h) - 完整 API 文档
+- **使用示例**：[examples/README.md](examples/README.md) - 集成指南
+- **示例代码**：[examples/api_example.c](examples/api_example.c) - 完整演示
 
 ## 许可证
 
@@ -309,6 +398,6 @@ xTdb Development Team
 
 ---
 
-**最后更新**：2026-01-02
-**版本**：V1.6 (Phase 1 & 2 Completed)
+**最后更新**：2026-01-07
+**版本**：V1.6 (Phase 1-11 Completed, API Ready)
 

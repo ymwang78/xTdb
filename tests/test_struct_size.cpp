@@ -25,10 +25,10 @@ TEST_F(StructSizeTest, RawChunkHeaderSize) {
         << "RawChunkHeaderV16 must be exactly 128 bytes";
 }
 
-// Test 3: BlockDirEntryV16 must be exactly 48 bytes
+// Test 3: BlockDirEntryV16 must be exactly 64 bytes (expanded from 48)
 TEST_F(StructSizeTest, BlockDirEntrySize) {
-    EXPECT_EQ(48u, sizeof(BlockDirEntryV16))
-        << "BlockDirEntryV16 must be exactly 48 bytes";
+    EXPECT_EQ(64u, sizeof(BlockDirEntryV16))
+        << "BlockDirEntryV16 must be exactly 64 bytes (expanded for encoding support)";
 }
 
 // Test 4: Verify ContainerHeaderV12 field offsets
@@ -75,13 +75,29 @@ TEST_F(StructSizeTest, BlockDirEntryLayout) {
     EXPECT_EQ(0, offsetof(BlockDirEntryV16, tag_id));
     EXPECT_EQ(4, sizeof(entry.tag_id));
 
-    // Check flags at offset 8
-    EXPECT_EQ(8, offsetof(BlockDirEntryV16, flags));
+    // Check type fields (4-7)
+    EXPECT_EQ(4, offsetof(BlockDirEntryV16, value_type));
+    EXPECT_EQ(5, offsetof(BlockDirEntryV16, time_unit));
+    EXPECT_EQ(6, offsetof(BlockDirEntryV16, encoding_type));  // New field
+
+    // Check record_size at offset 8
+    EXPECT_EQ(8, offsetof(BlockDirEntryV16, record_size));
+
+    // Check flags at offset 12
+    EXPECT_EQ(12, offsetof(BlockDirEntryV16, flags));
     EXPECT_EQ(4, sizeof(entry.flags));
 
     // Check timestamps
-    EXPECT_EQ(12, offsetof(BlockDirEntryV16, start_ts_us));
-    EXPECT_EQ(20, offsetof(BlockDirEntryV16, end_ts_us));
+    EXPECT_EQ(16, offsetof(BlockDirEntryV16, start_ts_us));
+    EXPECT_EQ(24, offsetof(BlockDirEntryV16, end_ts_us));
+
+    // Check record_count and data_crc32
+    EXPECT_EQ(32, offsetof(BlockDirEntryV16, record_count));
+    EXPECT_EQ(36, offsetof(BlockDirEntryV16, data_crc32));
+
+    // Check encoding parameters (new fields)
+    EXPECT_EQ(40, offsetof(BlockDirEntryV16, encoding_param1));
+    EXPECT_EQ(44, offsetof(BlockDirEntryV16, encoding_param2));
 }
 
 // Test 7: ContainerHeaderV12 initialization
@@ -144,6 +160,12 @@ TEST_F(StructSizeTest, BlockDirEntryInit) {
     // Check data_crc32 initialization
     EXPECT_EQ(0xFFFFFFFFu, entry.data_crc32)
         << "data_crc32 should be initialized to 0xFFFFFFFF";
+
+    // Check encoding parameters initialization (new fields)
+    EXPECT_EQ(0u, entry.encoding_param1)
+        << "encoding_param1 should be initialized to 0";
+    EXPECT_EQ(0u, entry.encoding_param2)
+        << "encoding_param2 should be initialized to 0";
 }
 
 // Test 10: Memory alignment verification
@@ -155,9 +177,13 @@ TEST_F(StructSizeTest, MemoryAlignment) {
     EXPECT_EQ(0, sizeof(RawChunkHeaderV16) % 16)
         << "RawChunkHeaderV16 size should be multiple of 16 bytes";
 
-    // BlockDirEntryV16 size should be compatible with extent writes
+    // BlockDirEntryV16 size should be 8-byte aligned (64 bytes = 8 * 8)
+    EXPECT_EQ(0, sizeof(BlockDirEntryV16) % 8)
+        << "BlockDirEntryV16 size should be multiple of 8 bytes";
+
+    // Verify 64 bytes is also 16-byte aligned
     EXPECT_EQ(0, sizeof(BlockDirEntryV16) % 16)
-        << "BlockDirEntryV16 size should be multiple of 16 bytes";
+        << "BlockDirEntryV16 size (64 bytes) should be multiple of 16 bytes";
 }
 
 // Test 11: Chunk state bit helpers
@@ -206,8 +232,10 @@ TEST_F(StructSizeTest, EnumSizes) {
     EXPECT_EQ(1, sizeof(ContainerLayout));
     EXPECT_EQ(1, sizeof(CapacityType));
     EXPECT_EQ(1, sizeof(RawBlockClass));
+    EXPECT_EQ(1, sizeof(ArchiveLevel));      // V1.6 new enum
     EXPECT_EQ(1, sizeof(ValueType));
     EXPECT_EQ(1, sizeof(TimeUnit));
+    EXPECT_EQ(1, sizeof(EncodingType));      // V1.6 new enum
     EXPECT_EQ(1, sizeof(ChunkStateBit));
     EXPECT_EQ(1, sizeof(BlockStateBit));
 }
