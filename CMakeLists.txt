@@ -47,6 +47,8 @@ add_library(xtdb_core
     src/block_reader.cpp
     src/metadata_sync.cpp
     src/storage_engine.cpp
+    src/swinging_door_encoder.cpp
+    src/swinging_door_decoder.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -258,8 +260,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME MaintenanceServiceTest COMMAND test_maintenance)
 
+    # Test: Swinging Door Compression (T14 - Phase 12)
+    add_executable(test_swinging_door
+        tests/test_swinging_door.cpp
+    )
+    target_link_libraries(test_swinging_door
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME SwingingDoorTest COMMAND test_swinging_door)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door")
 endif()
 
 # ============================================================================
