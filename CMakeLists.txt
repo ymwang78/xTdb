@@ -52,6 +52,7 @@ add_library(xtdb_core
     src/quantized_16_encoder.cpp
     src/quantized_16_decoder.cpp
     src/resampling_engine.cpp
+    src/archive_manager.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -311,8 +312,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME ResamplingTest COMMAND test_resampling)
 
+    # Test: Archive Manager (T18 - Phase 14)
+    add_executable(test_small_chunk
+        tests/test_small_chunk.cpp
+    )
+    target_link_libraries(test_small_chunk
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME ArchiveManagerTest COMMAND test_small_chunk)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk")
 endif()
 
 # ============================================================================
