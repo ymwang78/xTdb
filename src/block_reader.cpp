@@ -144,11 +144,6 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
     uint64_t block_offset = chunk_offset +
                            static_cast<uint64_t>(physical_block_index) * layout_.block_size_bytes;
 
-    std::cerr << "[BlockReader] Reading from block_offset=" << block_offset
-              << " (chunk_offset=" << chunk_offset
-              << ", physical_block_index=" << physical_block_index
-              << ", block_size=" << layout_.block_size_bytes << ")" << std::endl;
-
     // Read block
     AlignedBuffer buffer(layout_.block_size_bytes);
     IOResult io_result = io_->read(buffer.data(), layout_.block_size_bytes, block_offset);

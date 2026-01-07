@@ -1,6 +1,7 @@
 #include "xTdb/raw_scanner.h"
 #include "xTdb/constants.h"
 #include <cstring>
+#include <iostream>
 
 namespace xtdb {
 
@@ -86,22 +87,23 @@ ScanResult RawScanner::readBlockDirectory(uint64_t chunk_offset,
                                          std::vector<BlockDirEntryV16>& entries) {
     // Calculate directory size
     uint64_t dir_size_bytes = layout.data_blocks * sizeof(BlockDirEntryV16);
-    uint64_t buffer_size = alignToExtent(dir_size_bytes);
 
-    // Calculate directory offset (starts right after chunk header)
-    uint64_t dir_offset = chunk_offset + kChunkHeaderSize;
+    // For aligned I/O, read the entire meta region
+    uint64_t meta_region_size = layout.meta_blocks * layout.block_size_bytes;
+    AlignedBuffer buffer(meta_region_size);
 
-    // Read directory
-    AlignedBuffer buffer(buffer_size);
-    IOResult result = io_->read(buffer.data(), buffer_size, dir_offset);
+    // Read meta region (includes chunk header + directory)
+    IOResult result = io_->read(buffer.data(), meta_region_size, chunk_offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to read block directory: " + io_->getLastError());
         return ScanResult::ERROR_IO_FAILED;
     }
 
-    // Copy entries
+    // Extract directory entries (starts after chunk header)
     entries.resize(layout.data_blocks);
-    std::memcpy(entries.data(), buffer.data(), dir_size_bytes);
+    std::memcpy(entries.data(),
+                static_cast<const char*>(buffer.data()) + kChunkHeaderSize,
+                dir_size_bytes);
 
     return ScanResult::SUCCESS;
 }
@@ -156,6 +158,7 @@ ScanResult RawScanner::scanChunk(uint64_t chunk_offset,
 
     // Convert entries to ScannedBlock
     chunk.blocks.clear();
+
     for (uint32_t i = 0; i < entries.size(); i++) {
         const BlockDirEntryV16& entry = entries[i];
 

@@ -24,11 +24,6 @@ StorageEngine::StorageEngine(const EngineConfig& config)
         config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K,
                                                            chunk_size_extents);
     }
-
-    std::cerr << "[StorageEngine] Layout: block_size=" << config_.layout.block_size_bytes
-              << " chunk_size=" << config_.layout.chunk_size_bytes
-              << " meta_blocks=" << config_.layout.meta_blocks
-              << " data_blocks=" << config_.layout.data_blocks << std::endl;
 }
 
 StorageEngine::~StorageEngine() {
@@ -596,21 +591,10 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
                     continue;
                 }
 
-                // Debug: print block info
-                std::cerr << "[DEBUG] Block " << block_info.block_index
-                          << ": tag=" << block_info.tag_id
-                          << " start_ts=" << block_info.start_ts_us
-                          << " end_ts=" << block_info.end_ts_us
-                          << " records=" << block_info.record_count << std::endl;
-                std::cerr << "[DEBUG] Query range: " << start_ts_us << " to " << end_ts_us << std::endl;
-
                 if (block_info.end_ts_us < start_ts_us ||
                     block_info.start_ts_us > end_ts_us) {
-                    std::cerr << "[DEBUG] Block filtered out (no overlap)" << std::endl;
                     continue;
                 }
-
-                std::cerr << "[DEBUG] Block overlaps query range, reading..." << std::endl;
 
                 std::vector<MemRecord> records;
                 ReadResult read_result = reader.readBlock(
@@ -626,15 +610,6 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
 
                 if (read_result == ReadResult::SUCCESS) {
                     read_stats_.blocks_read++;
-                    std::cerr << "[DEBUG] Read " << records.size() << " records from block" << std::endl;
-
-                    int match_count = 0;
-                    for (size_t i = 0; i < records.size() && i < 5; i++) {
-                        int64_t timestamp_us = block_info.start_ts_us +
-                                             static_cast<int64_t>(records[i].time_offset) * 1000;
-                        std::cerr << "[DEBUG] Record[" << i << "]: time_offset=" << records[i].time_offset
-                                  << " ts=" << timestamp_us << std::endl;
-                    }
 
                     for (const auto& record : records) {
                         int64_t timestamp_us = block_info.start_ts_us +
@@ -645,12 +620,8 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
                                                record.value.f64_value,
                                                record.quality);
                             read_stats_.points_read_disk++;
-                            match_count++;
                         }
                     }
-                    std::cerr << "[DEBUG] Matched " << match_count << " records in time range" << std::endl;
-                } else {
-                    std::cerr << "[DEBUG] Block read failed: " << static_cast<int>(read_result) << std::endl;
                 }
             }
         }

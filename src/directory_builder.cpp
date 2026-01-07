@@ -28,22 +28,23 @@ DirBuildResult DirectoryBuilder::initialize() {
 DirBuildResult DirectoryBuilder::load() {
     // Calculate directory size
     uint64_t dir_size_bytes = layout_.data_blocks * sizeof(BlockDirEntryV16);
-    uint64_t buffer_size = alignToExtent(dir_size_bytes);
 
-    // Calculate directory offset (starts right after chunk header)
-    uint64_t dir_offset = chunk_offset_ + kChunkHeaderSize;
+    // For aligned I/O, read the entire meta region
+    uint64_t meta_region_size = layout_.meta_blocks * layout_.block_size_bytes;
+    AlignedBuffer buffer(meta_region_size);
 
-    // Read directory from disk
-    AlignedBuffer buffer(buffer_size);
-    IOResult result = io_->read(buffer.data(), buffer_size, dir_offset);
+    // Read meta region (includes chunk header + directory)
+    IOResult result = io_->read(buffer.data(), meta_region_size, chunk_offset_);
     if (result != IOResult::SUCCESS) {
         setError("Failed to load block directory: " + io_->getLastError());
         return DirBuildResult::ERROR_IO_FAILED;
     }
 
-    // Copy entries from buffer
+    // Extract directory entries (starts after chunk header)
     entries_.resize(layout_.data_blocks);
-    std::memcpy(entries_.data(), buffer.data(), dir_size_bytes);
+    std::memcpy(entries_.data(),
+                static_cast<const char*>(buffer.data()) + kChunkHeaderSize,
+                dir_size_bytes);
 
     // Count sealed blocks
     sealed_block_count_ = 0;
