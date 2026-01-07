@@ -51,6 +51,7 @@ add_library(xtdb_core
     src/swinging_door_decoder.cpp
     src/quantized_16_encoder.cpp
     src/quantized_16_decoder.cpp
+    src/resampling_engine.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -298,8 +299,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME Quantized16Test COMMAND test_quantized_16)
 
+    # Test: Resampling Engine (T17 - Phase 14)
+    add_executable(test_resampling
+        tests/test_resampling.cpp
+    )
+    target_link_libraries(test_resampling
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME ResamplingTest COMMAND test_resampling)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling")
 endif()
 
 # ============================================================================
