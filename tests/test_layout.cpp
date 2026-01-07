@@ -28,17 +28,17 @@ TEST_F(LayoutTest, RAW16K_256MB) {
     // Calculate blocks_per_chunk: 256MB / 16KB = 16384 blocks
     EXPECT_EQ(16384, layout.blocks_per_chunk);
 
-    // meta_blocks calculation (iterative):
+    // meta_blocks calculation (Updated for 64-byte BlockDirEntryV16):
     // Initial estimate: data_blocks = 16384
-    // meta_bytes = 128 (header) + 16384 * 48 (entries) = 786,560 bytes
-    // meta_blocks = ceil(786,560 / 16,384) = 48 blocks
-    // data_blocks = 16384 - 48 = 16336
+    // meta_bytes = 128 (header) + 16384 * 64 (entries) = 1,048,704 bytes
+    // meta_blocks = ceil(1,048,704 / 16,384) = 64 blocks
+    // data_blocks = 16384 - 64 = 16320
     // Verify convergence:
-    // meta_bytes = 128 + 16336 * 48 = 784,256 bytes
-    // meta_blocks = ceil(784,256 / 16,384) = 48 blocks (converged)
+    // meta_bytes = 128 + 16320 * 64 = 1,044,608 bytes
+    // meta_blocks = ceil(1,044,608 / 16,384) = 64 blocks (converged)
 
-    EXPECT_EQ(48, layout.meta_blocks) << "Meta blocks for RAW16K 256MB chunk";
-    EXPECT_EQ(16336, layout.data_blocks) << "Data blocks for RAW16K 256MB chunk";
+    EXPECT_EQ(64, layout.meta_blocks) << "Meta blocks for RAW16K 256MB chunk";
+    EXPECT_EQ(16320, layout.data_blocks) << "Data blocks for RAW16K 256MB chunk";
 
     // Verify sum
     EXPECT_EQ(layout.blocks_per_chunk, layout.meta_blocks + layout.data_blocks);
@@ -62,14 +62,14 @@ TEST_F(LayoutTest, RAW64K_256MB) {
     // blocks_per_chunk: 256MB / 64KB = 4096 blocks
     EXPECT_EQ(4096, layout.blocks_per_chunk);
 
-    // meta_blocks calculation:
+    // meta_blocks calculation (Updated for 64-byte BlockDirEntryV16):
     // data_blocks estimate = 4096
-    // meta_bytes = 128 + 4096 * 48 = 196,736 bytes
-    // meta_blocks = ceil(196,736 / 65,536) = 3 blocks
-    // data_blocks = 4096 - 3 = 4093
+    // meta_bytes = 128 + 4096 * 64 = 262,272 bytes
+    // meta_blocks = ceil(262,272 / 65,536) = 4 blocks
+    // data_blocks = 4096 - 4 = 4092
 
-    EXPECT_EQ(3, layout.meta_blocks) << "Meta blocks for RAW64K 256MB chunk";
-    EXPECT_EQ(4093, layout.data_blocks) << "Data blocks for RAW64K 256MB chunk";
+    EXPECT_EQ(4, layout.meta_blocks) << "Meta blocks for RAW64K 256MB chunk";
+    EXPECT_EQ(4092, layout.data_blocks) << "Data blocks for RAW64K 256MB chunk";
 
     // Verify sum
     EXPECT_EQ(layout.blocks_per_chunk, layout.meta_blocks + layout.data_blocks);

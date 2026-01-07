@@ -70,6 +70,11 @@ void StorageEngine::close() {
         return;
     }
 
+    // Clear directory builder and mutator BEFORE closing I/O
+    // (they hold raw pointers to io_)
+    dir_builder_.reset();
+    mutator_.reset();
+
     // Close metadata
     if (metadata_) {
         metadata_->close();

@@ -57,6 +57,15 @@ ChunkLayout LayoutCalculator::calculateLayout(
     layout.meta_blocks = meta_blocks;
     layout.data_blocks = layout.blocks_per_chunk - meta_blocks;
 
+    // Safety check: Verify meta region is large enough (handle oscillation case)
+    uint64_t required_meta_bytes = kChunkHeaderSize + layout.data_blocks * kBlockDirEntrySize;
+    uint64_t available_meta_bytes = layout.meta_blocks * layout.block_size_bytes;
+    if (available_meta_bytes < required_meta_bytes) {
+        // Need one more meta block
+        layout.meta_blocks++;
+        layout.data_blocks = layout.blocks_per_chunk - layout.meta_blocks;
+    }
+
     // Sanity check
     if (layout.meta_blocks == 0 || layout.data_blocks == 0) {
         throw std::runtime_error("Invalid layout: zero meta_blocks or data_blocks");

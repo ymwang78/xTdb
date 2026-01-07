@@ -23,7 +23,7 @@ struct ChunkLayout {
 };
 
 /// Block directory entry size (from design V1.6 Section 7.2)
-constexpr uint32_t kBlockDirEntrySize = 48u;  // sizeof(BlockDirEntryV16)
+constexpr uint32_t kBlockDirEntrySize = 64u;  // sizeof(BlockDirEntryV16) - Updated for PHD compression features
 
 /// Chunk header size (from design V1.6 Section 6)
 constexpr uint32_t kChunkHeaderSize = 128u;   // sizeof(RawChunkHeaderV16)
