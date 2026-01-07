@@ -141,18 +141,19 @@ TEST_F(SealDirectoryTest, WriteDirectoryToDisk) {
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.writeDirectory());
 
     // Read back directory and verify
-    // Directory starts at block 1 (block 0 contains chunk header)
-    uint64_t dir_offset = layout_.block_size_bytes;
-    uint64_t dir_size = layout_.data_blocks * sizeof(BlockDirEntryV16);
-    uint64_t buffer_size = alignToExtent(dir_size);
+    // Directory starts after chunk header in block 0
+    // Must read entire meta region (aligned to block size) then extract directory
+    uint64_t chunk_offset = 0;  // Chunk starts at offset 0
+    uint64_t meta_region_size = layout_.meta_blocks * layout_.block_size_bytes;
 
-    AlignedBuffer buffer(buffer_size);
+    AlignedBuffer buffer(meta_region_size);
     ASSERT_EQ(IOResult::SUCCESS,
-              io_->read(buffer.data(), buffer_size, dir_offset));
+              io_->read(buffer.data(), meta_region_size, chunk_offset));
 
-    // Verify first entry
+    // Extract directory portion (starts after chunk header)
     const BlockDirEntryV16* entries =
-        static_cast<const BlockDirEntryV16*>(buffer.data());
+        reinterpret_cast<const BlockDirEntryV16*>(
+            static_cast<const char*>(buffer.data()) + kChunkHeaderSize);
     EXPECT_EQ(100u, entries[0].tag_id);
     EXPECT_EQ(50u, entries[0].record_count);
 }

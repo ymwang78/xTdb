@@ -150,7 +150,7 @@ TEST_F(WritePathTest, BlockWriterBlindWrite) {
     // Calculate offset of data block 0
     uint32_t data_block_0_index = layout_.meta_blocks;  // First block after meta
     uint64_t data_offset = LayoutCalculator::calculateBlockOffset(
-        0, data_block_0_index, layout_);
+        0, data_block_0_index, layout_, 0);  // container_base=0 (no container header in test)
 
     // Read back the block
     AlignedBuffer read_buffer(layout_.block_size_bytes);

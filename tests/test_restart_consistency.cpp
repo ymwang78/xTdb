@@ -81,9 +81,9 @@ TEST_F(RestartConsistencyTest, ActiveChunkAllocation) {
     EngineResult result = engine.open();
     EXPECT_EQ(EngineResult::SUCCESS, result);
 
-    // Check active chunk
+    // Check active chunk (starts at chunk_id 0 for fresh database)
     const auto& active_chunk = engine.getActiveChunk();
-    EXPECT_EQ(42u, active_chunk.chunk_id);
+    EXPECT_EQ(0u, active_chunk.chunk_id);
     EXPECT_EQ(kExtentSizeBytes, active_chunk.chunk_offset);
     EXPECT_EQ(0u, active_chunk.blocks_used);
     EXPECT_GT(active_chunk.blocks_total, 0u);
@@ -117,9 +117,9 @@ TEST_F(RestartConsistencyTest, T10_RestartConsistency) {
     EngineResult result = engine.open();
     ASSERT_EQ(EngineResult::SUCCESS, result);
 
-    // Verify active chunk is created
+    // Verify active chunk is created (starts at chunk_id 0 for fresh database)
     const auto& active_chunk = engine.getActiveChunk();
-    EXPECT_EQ(42u, active_chunk.chunk_id);
+    EXPECT_EQ(0u, active_chunk.chunk_id);
     EXPECT_EQ(kExtentSizeBytes, active_chunk.chunk_offset);
 
     // Verify files exist
@@ -155,9 +155,9 @@ TEST_F(RestartConsistencyTest, MultipleOperations) {
     const auto& containers = engine.getContainers();
     EXPECT_EQ(1, containers.size());
 
-    // Verify active chunk
+    // Verify active chunk (starts at chunk_id 0 for fresh database)
     const auto& active_chunk = engine.getActiveChunk();
-    EXPECT_EQ(42u, active_chunk.chunk_id);
+    EXPECT_EQ(0u, active_chunk.chunk_id);
 
     engine.close();
 
