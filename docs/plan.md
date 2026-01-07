@@ -354,3 +354,240 @@
 API 只是对 `StorageEngine` 方法的简单包装。
 
 **您想先看 `StorageEngine::Open` (Bootstrap) 的伪代码逻辑，还是 `Write Coordinator` 中处理 Chunk 切换（Roll）的详细流程？这两个是最容易出错的地方。**
+
+---
+
+### 阶段 12：Swinging Door 压缩 (Data Compression)
+
+**目标**：实现 Honeywell PHD 的旋转门压缩算法，实现 10:1 至 100:1 的压缩比。
+
+#### 12.1 模块编写
+
+* **`SwingingDoorEncoder`**：
+  * 实现受限斜率压缩算法
+  * 维护容差带（tolerance band）
+  * 存储关键拐点而非所有采样点
+  * 支持按 Tag 配置压缩参数
+
+* **`SwingingDoorDecoder`**：
+  * 从压缩数据重建线性段
+  * 实现线性插值算法
+  * 保证重建误差在容差范围内
+
+#### 12.2 测试计划
+
+* **T14-SwingingDoorCompression**：
+  * 测试平稳数据压缩（目标 50:1 以上）
+  * 测试波动数据压缩
+  * 验证插值精度（误差 < tolerance）
+  * 测试边界条件
+
+* **T15-CompressionE2E**：
+  * 端到端写入-压缩-读取-解压流程
+  * 验证数据完整性
+  * 测量实际压缩比
+
+**状态**：✅ 已完成（Phase 12）
+- 实现了 SwingingDoorEncoder/Decoder
+- 5 个单元测试全部通过
+- 端到端测试验证通过
+
+---
+
+### 阶段 13：16-bit 量化压缩 (Quantization)
+
+**目标**：实现 16-bit 量化编码，将 64-bit 浮点数映射为 16-bit 整数，节省 50%-75% 存储空间。
+
+#### 13.1 模块编写
+
+* **`Quantized16Encoder`**：
+  * 将浮点数映射到 [low_extreme, high_extreme] 范围
+  * 线性量化为 uint16_t
+  * 保持 0.0015% 相对精度
+
+* **`Quantized16Decoder`**：
+  * 从 uint16_t 还原为浮点数
+  * 处理超量程值
+
+#### 13.2 测试计划
+
+* **T16-Quantized16**：
+  * 测试量化精度（误差 < 0.0015%）
+  * 测试边界值处理
+  * 测试超量程值
+  * 验证编码/解码对称性
+
+**状态**：✅ 已完成（Phase 13）
+- 实现了 Quantized16Encoder/Decoder
+- 8 个单元测试全部通过
+- 精度验证通过（相对误差 < 0.002%）
+
+---
+
+### 阶段 14：多分辨率 Archive 系统 (Multi-Resolution Archives)
+
+**目标**：实现 Honeywell PHD 的分层归档机制，支持时间重叠的多分辨率存储。
+
+#### 14.1 模块编写
+
+* **`ResamplingEngine`**：
+  * 时间窗口聚合算法
+  * 支持多种聚合方法（avg/min/max/first/last/count）
+  * 质量平均计算
+  * 实现 60:1 压缩比（1分钟和1小时重采样）
+
+* **`ArchiveManager`**：
+  * 多分辨率 Archive 管理
+  * 智能查询路由（基于时间跨度选择最佳 Archive）
+  * Archive 注册与元数据管理
+  * 推荐 Archive 层级
+
+#### 14.2 测试计划
+
+* **T17-ResamplingEngine**：
+  * 测试 1分钟/1小时重采样
+  * 验证聚合计算正确性
+  * 测试稀疏/密集数据处理
+  * 验证压缩比（目标 60:1）
+
+* **T18-ArchiveManager**：
+  * 测试 Archive 注册
+  * 测试短查询选择（应选 RAW）
+  * 测试长查询选择（应选 1H）
+  * 测试 prefer_raw 标志
+  * 测试多层级推荐逻辑
+
+**状态**：✅ 已完成（Phase 14）
+- ResamplingEngine：8 个测试全部通过
+- ArchiveManager：9 个测试全部通过
+- 智能查询路由实现完成（自适应评分权重）
+- 所有 17 个项目测试通过（100%）
+
+---
+
+### 阶段 15：集成测试与验证 (Integration Testing & Validation)
+
+**目标**：验证所有 PHD 特性的端到端功能，确保各组件协同工作正常。
+
+#### 15.1 测试计划
+
+* **T19-CompressionIntegration**：
+  * 端到端压缩测试（Swinging Door + 16-bit 量化联合效果）
+  * 测试不同数据模式（平稳、波动、稀疏）
+  * 验证压缩比累积效果
+  * 测量实际存储节省
+
+* **T20-MultiResolutionQuery**：
+  * 验证不同时间跨度查询的自动路由
+  * 短查询（< 1小时）验证选择 RAW archive
+  * 中查询（1小时-1天）验证选择 1M archive
+  * 长查询（> 1天）验证选择 1H archive
+  * 测试跨 Archive 边界查询
+  * 验证查询结果准确性
+
+* **T21-PerformanceBenchmark**：
+  * 压缩比基准测试（目标：50:1 - 100:1）
+  * 查询速度基准测试（目标：10x-100x 加速）
+  * 存储节省测量（目标：90%-99%）
+  * 写入吞吐量测试
+  * 内存使用测量
+
+* **T22-CrashRecovery**：
+  * 验证压缩数据的崩溃恢复能力
+  * 测试重采样数据的恢复
+  * 验证 Archive 元数据一致性
+  * WAL 重放与压缩数据的兼容性
+
+* **T23-LargeScaleSimulation**：
+  * 模拟工业场景（数千 tags，数百万点）
+  * 多并发写入压力测试
+  * 长时间运行稳定性测试
+  * Archive 自动切换测试
+  * 资源使用监控（CPU/内存/磁盘）
+
+#### 15.2 验证指标
+
+**压缩效果**：
+- Swinging Door 压缩比：> 10:1（平稳数据 > 50:1）
+- 16-bit 量化节省：50%-75%
+- 联合压缩效果：90%-99% 存储节省
+
+**查询性能**：
+- 短查询延迟：< 10ms（RAW archive）
+- 长查询加速：10x-100x（vs RAW archive）
+- 吞吐量：> 100K points/sec
+
+**可靠性**：
+- 崩溃恢复成功率：100%
+- 数据完整性：零丢失
+- 精度保证：误差 < tolerance
+
+**状态**：⏳ 进行中（Phase 15）
+
+---
+
+### 阶段 16：性能优化 (Performance Optimization)
+
+**目标**：优化现有功能的性能，提升系统吞吐量和响应速度。
+
+#### 16.1 优化方向
+
+* **并行化**：
+  * 并行 Block 读取
+  * 并行解压缩
+  * 并行重采样
+
+* **缓存机制**：
+  * Block 缓存（LRU）
+  * Archive 元数据缓存
+  * 解压结果缓存
+
+* **算法优化**：
+  * Archive 选择算法优化
+  * 重采样算法 SIMD 加速
+  * 压缩算法优化
+
+**状态**：🔜 未开始（Phase 16）
+
+---
+
+### 阶段 17：质量加权聚合 (Quality-Weighted Aggregation)
+
+**目标**：实现 PHD 的质量/置信度加权聚合，提升统计结果准确性。
+
+#### 17.1 模块编写
+
+* **`QualityWeightedAggregator`**：
+  * 扩展 quality 字段语义为 0-100 置信度
+  * 实现加权平均：weighted_avg = Σ(value_i × quality_i) / Σ(quality_i)
+  * 在聚合操作中使用质量权重
+  * 动态调整质量（插值、降采样时降低质量）
+
+**状态**：🔜 未开始（Phase 17）
+
+---
+
+### 阶段 18：预处理管道 (Ingestion Pipeline)
+
+**目标**：实现 PHD 的数据预处理功能，提升数据质量和压缩比。
+
+#### 18.1 模块编写
+
+* **`GrossErrorRemover`**：毛刺剔除（基于标准差阈值）
+* **`ExponentialSmoother`**：指数平滑
+* **`DeadbandGating`**：死区门控（微小变化抑制）
+
+**预期效果**：10%-30% 额外存储节省
+
+**状态**：🔜 未开始（Phase 18）
+
+---
+
+### 执行优先级
+
+1. ✅ **Phase 12-14**：核心 PHD 特性（已完成）
+2. ⏳ **Phase 15**：集成测试与验证（进行中）
+3. 🔜 **Phase 16**：性能优化
+4. 🔜 **Phase 17-18**：高级特性
+
+**当前状态**：开始 Phase 15 集成测试
