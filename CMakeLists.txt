@@ -202,6 +202,15 @@ if(BUILD_TESTS)
     )
     add_test(NAME ReadCoordinatorTest COMMAND test_read_coordinator)
 
+    # Test: Hybrid Debug
+    add_executable(test_hybrid_debug
+        tests/test_hybrid_debug.cpp
+    )
+    target_link_libraries(test_hybrid_debug
+        xtdb_core
+        pthread
+    )
+
     # Summary
     message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator")
 endif()

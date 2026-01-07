@@ -88,8 +88,8 @@ ScanResult RawScanner::readBlockDirectory(uint64_t chunk_offset,
     uint64_t dir_size_bytes = layout.data_blocks * sizeof(BlockDirEntryV16);
     uint64_t buffer_size = alignToExtent(dir_size_bytes);
 
-    // Calculate directory offset (starts at block 1)
-    uint64_t dir_offset = chunk_offset + layout.block_size_bytes;
+    // Calculate directory offset (starts right after chunk header)
+    uint64_t dir_offset = chunk_offset + kChunkHeaderSize;
 
     // Read directory
     AlignedBuffer buffer(buffer_size);

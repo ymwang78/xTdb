@@ -6,13 +6,29 @@
 #include <unistd.h>
 #include <cstring>
 #include <algorithm>
+#include <iostream>
 
 namespace xtdb {
 
 StorageEngine::StorageEngine(const EngineConfig& config)
     : config_(config), is_open_(false) {
-    // Calculate layout based on block class (default: RAW_16K)
-    config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K);
+    // If layout not specified by user, calculate default layout based on RAW_16K
+    if (config_.layout.block_size_bytes == 0 || config_.layout.chunk_size_bytes == 0) {
+        config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K);
+    }
+    // Otherwise, recalculate meta/data blocks for user-specified sizes
+    else if (config_.layout.meta_blocks == 0 || config_.layout.data_blocks == 0) {
+        // Convert chunk_size_bytes to extents
+        uint32_t chunk_size_extents = static_cast<uint32_t>(
+            config_.layout.chunk_size_bytes / kExtentSizeBytes);
+        config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K,
+                                                           chunk_size_extents);
+    }
+
+    std::cerr << "[StorageEngine] Layout: block_size=" << config_.layout.block_size_bytes
+              << " chunk_size=" << config_.layout.chunk_size_bytes
+              << " meta_blocks=" << config_.layout.meta_blocks
+              << " data_blocks=" << config_.layout.data_blocks << std::endl;
 }
 
 StorageEngine::~StorageEngine() {
@@ -177,7 +193,8 @@ EngineResult StorageEngine::restoreActiveState() {
     // This is simplified for Phase 7 - full implementation would query SQLite for active chunks
 
     // Initialize active chunk info
-    active_chunk_.chunk_id = 42;  // Start with ID 42
+    // First chunk at offset kExtentSizeBytes corresponds to chunk_id = 0
+    active_chunk_.chunk_id = 0;
     active_chunk_.chunk_offset = kExtentSizeBytes;  // After container header
     active_chunk_.blocks_used = 0;
     active_chunk_.blocks_total = config_.layout.data_blocks;
@@ -211,6 +228,16 @@ EngineResult StorageEngine::restoreActiveState() {
                                                       scanned_chunk);
             if (scan_result == ScanResult::SUCCESS) {
                 active_chunk_.blocks_used = scanned_chunk.blocks.size();
+            }
+
+            // Create DirectoryBuilder and load existing directory from disk
+            dir_builder_ = std::make_unique<DirectoryBuilder>(io_.get(),
+                                                              config_.layout,
+                                                              active_chunk_.chunk_offset);
+            DirBuildResult dir_result = dir_builder_->load();
+            if (dir_result != DirBuildResult::SUCCESS) {
+                setError("Failed to load directory: " + dir_builder_->getLastError());
+                return EngineResult::ERROR_STATE_RESTORATION_FAILED;
             }
 
             return EngineResult::SUCCESS;
@@ -266,16 +293,17 @@ EngineResult StorageEngine::verifyContainerHeader(const std::string& container_p
         return EngineResult::ERROR_CONTAINER_HEADER_INVALID;
     }
 
-    // Verify file size
+    // Verify file size - check that file has at least the header
     struct stat st;
     if (stat(container_path.c_str(), &st) != 0) {
         setError("Failed to stat container file");
         return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
     }
 
-    uint64_t capacity_bytes = header.capacity_extents * kExtentSizeBytes;
-    if (static_cast<uint64_t>(st.st_size) < capacity_bytes) {
-        setError("Container file truncated");
+    // TODO Phase 10: Implement proper container pre-allocation
+    // For now, just verify the file exists and has a header
+    if (static_cast<uint64_t>(st.st_size) < kExtentSizeBytes) {
+        setError("Container file too small");
         return EngineResult::ERROR_CONTAINER_HEADER_INVALID;
     }
 
@@ -327,6 +355,16 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
     MutateResult mut_result = mutator_->allocateChunk(chunk_offset);
     if (mut_result != MutateResult::SUCCESS) {
         setError("Failed to set chunk state: " + mutator_->getLastError());
+        return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+    }
+
+    // Create DirectoryBuilder for this chunk
+    dir_builder_ = std::make_unique<DirectoryBuilder>(io_.get(),
+                                                      config_.layout,
+                                                      chunk_offset);
+    DirBuildResult dir_result = dir_builder_->initialize();
+    if (dir_result != DirBuildResult::SUCCESS) {
+        setError("Failed to initialize directory: " + dir_builder_->getLastError());
         return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
     }
 
@@ -448,7 +486,7 @@ EngineResult StorageEngine::flush() {
         BlockWriter writer(io_.get(), config_.layout, kExtentSizeBytes);
 
         uint32_t data_block_index = active_chunk_.blocks_used;
-        BlockWriteResult write_result = writer.writeBlock(active_chunk_.chunk_id,
+        BlockWriteResult write_result = writer.writeBlock(active_chunk_.chunk_offset,
                                                          data_block_index,
                                                          tag_buffer);
         if (write_result != BlockWriteResult::SUCCESS) {
@@ -458,13 +496,9 @@ EngineResult StorageEngine::flush() {
 
         write_stats_.blocks_flushed++;
 
-        // Update directory entry
-        DirectoryBuilder dir_builder(io_.get(), config_.layout, active_chunk_.chunk_offset);
-
-        // Initialize directory
-        DirBuildResult init_result = dir_builder.initialize();
-        if (init_result != DirBuildResult::SUCCESS) {
-            setError("Failed to initialize directory: " + dir_builder.getLastError());
+        // Update directory entry using persistent dir_builder
+        if (!dir_builder_) {
+            setError("Directory builder not initialized");
             return EngineResult::ERROR_INVALID_DATA;
         }
 
@@ -482,7 +516,7 @@ EngineResult StorageEngine::flush() {
             block_end_ts = tag_buffer.start_ts_us + static_cast<int64_t>(max_offset) * 1000;
         }
 
-        DirBuildResult dir_result = dir_builder.sealBlock(
+        DirBuildResult dir_result = dir_builder_->sealBlock(
             data_block_index,
             tag_id,
             block_start_ts,
@@ -494,14 +528,14 @@ EngineResult StorageEngine::flush() {
         );
 
         if (dir_result != DirBuildResult::SUCCESS) {
-            setError("Failed to seal block in directory: " + dir_builder.getLastError());
+            setError("Failed to seal block in directory: " + dir_builder_->getLastError());
             return EngineResult::ERROR_INVALID_DATA;
         }
 
         // Write directory to disk
-        dir_result = dir_builder.writeDirectory();
+        dir_result = dir_builder_->writeDirectory();
         if (dir_result != DirBuildResult::SUCCESS) {
-            setError("Failed to write directory: " + dir_builder.getLastError());
+            setError("Failed to write directory: " + dir_builder_->getLastError());
             return EngineResult::ERROR_INVALID_DATA;
         }
 
@@ -515,6 +549,118 @@ EngineResult StorageEngine::flush() {
         // Clear buffer after successful write
         tag_buffer.records.clear();
     }
+
+    return EngineResult::SUCCESS;
+}
+
+EngineResult StorageEngine::queryPoints(uint32_t tag_id,
+                                        int64_t start_ts_us,
+                                        int64_t end_ts_us,
+                                        std::vector<QueryPoint>& results) {
+    if (!is_open_) {
+        setError("Engine not open");
+        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+    }
+
+    results.clear();
+    read_stats_.queries_executed++;
+
+    // Step 1: Read from memory buffers (unflushed data)
+    auto it = buffers_.find(tag_id);
+    if (it != buffers_.end()) {
+        const TagBuffer& tag_buffer = it->second;
+        for (const auto& record : tag_buffer.records) {
+            int64_t timestamp_us = tag_buffer.start_ts_us +
+                                  static_cast<int64_t>(record.time_offset) * 1000;
+            if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
+                results.emplace_back(timestamp_us, record.value.f64_value, record.quality);
+                read_stats_.points_read_memory++;
+            }
+        }
+    }
+
+    // Step 2: Read from disk blocks
+    if (active_chunk_.blocks_used > 0) {
+        RawScanner scanner(io_.get());
+        ScannedChunk scanned_chunk;
+
+        ScanResult scan_result = scanner.scanChunk(active_chunk_.chunk_offset,
+                                                   config_.layout,
+                                                   scanned_chunk);
+
+        if (scan_result == ScanResult::SUCCESS) {
+            BlockReader reader(io_.get(), config_.layout);
+
+            for (const auto& block_info : scanned_chunk.blocks) {
+                if (block_info.tag_id != tag_id) {
+                    continue;
+                }
+
+                // Debug: print block info
+                std::cerr << "[DEBUG] Block " << block_info.block_index
+                          << ": tag=" << block_info.tag_id
+                          << " start_ts=" << block_info.start_ts_us
+                          << " end_ts=" << block_info.end_ts_us
+                          << " records=" << block_info.record_count << std::endl;
+                std::cerr << "[DEBUG] Query range: " << start_ts_us << " to " << end_ts_us << std::endl;
+
+                if (block_info.end_ts_us < start_ts_us ||
+                    block_info.start_ts_us > end_ts_us) {
+                    std::cerr << "[DEBUG] Block filtered out (no overlap)" << std::endl;
+                    continue;
+                }
+
+                std::cerr << "[DEBUG] Block overlaps query range, reading..." << std::endl;
+
+                std::vector<MemRecord> records;
+                ReadResult read_result = reader.readBlock(
+                    active_chunk_.chunk_offset,
+                    block_info.block_index,
+                    block_info.tag_id,
+                    block_info.start_ts_us,
+                    block_info.time_unit,
+                    block_info.value_type,
+                    block_info.record_count,
+                    records
+                );
+
+                if (read_result == ReadResult::SUCCESS) {
+                    read_stats_.blocks_read++;
+                    std::cerr << "[DEBUG] Read " << records.size() << " records from block" << std::endl;
+
+                    int match_count = 0;
+                    for (size_t i = 0; i < records.size() && i < 5; i++) {
+                        int64_t timestamp_us = block_info.start_ts_us +
+                                             static_cast<int64_t>(records[i].time_offset) * 1000;
+                        std::cerr << "[DEBUG] Record[" << i << "]: time_offset=" << records[i].time_offset
+                                  << " ts=" << timestamp_us << std::endl;
+                    }
+
+                    for (const auto& record : records) {
+                        int64_t timestamp_us = block_info.start_ts_us +
+                                             static_cast<int64_t>(record.time_offset) * 1000;
+
+                        if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
+                            results.emplace_back(timestamp_us,
+                                               record.value.f64_value,
+                                               record.quality);
+                            read_stats_.points_read_disk++;
+                            match_count++;
+                        }
+                    }
+                    std::cerr << "[DEBUG] Matched " << match_count << " records in time range" << std::endl;
+                } else {
+                    std::cerr << "[DEBUG] Block read failed: " << static_cast<int>(read_result) << std::endl;
+                }
+            }
+        }
+    }
+
+    // Step 3: Sort results by timestamp
+    std::sort(results.begin(), results.end(),
+              [](const QueryPoint& a, const QueryPoint& b) {
+                  return a.timestamp_us < b.timestamp_us;
+              });
 
     return EngineResult::SUCCESS;
 }

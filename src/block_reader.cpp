@@ -1,6 +1,7 @@
 #include "xTdb/block_reader.h"
 #include "xTdb/constants.h"
 #include <cstring>
+#include <iostream>
 
 namespace xtdb {
 
@@ -142,6 +143,11 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
     uint32_t physical_block_index = layout_.meta_blocks + block_index;
     uint64_t block_offset = chunk_offset +
                            static_cast<uint64_t>(physical_block_index) * layout_.block_size_bytes;
+
+    std::cerr << "[BlockReader] Reading from block_offset=" << block_offset
+              << " (chunk_offset=" << chunk_offset
+              << ", physical_block_index=" << physical_block_index
+              << ", block_size=" << layout_.block_size_bytes << ")" << std::endl;
 
     // Read block
     AlignedBuffer buffer(layout_.block_size_bytes);

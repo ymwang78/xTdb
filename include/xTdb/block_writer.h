@@ -47,7 +47,7 @@ public:
     /// @param data_block_index Data block index (0-based, relative to data region)
     /// @param tag_buffer Tag buffer with records
     /// @return BlockWriteResult
-    BlockWriteResult writeBlock(uint32_t chunk_id,
+    BlockWriteResult writeBlock(uint64_t chunk_offset,
                                 uint32_t data_block_index,
                                 const TagBuffer& tag_buffer);
 

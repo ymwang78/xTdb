@@ -1,6 +1,7 @@
 #include "xTdb/block_writer.h"
 #include <cassert>
 #include <cstring>
+#include <iostream>
 
 namespace xtdb {
 
@@ -51,9 +52,18 @@ uint64_t BlockWriter::serializeRecords(const TagBuffer& tag_buffer,
 
     uint16_t record_size = calculateRecordSize(tag_buffer.value_type);
 
+    std::cerr << "[BlockWriter] Serializing " << tag_buffer.records.size()
+              << " records, record_size=" << record_size << std::endl;
+
+    int debug_count = 0;
     for (const auto& record : tag_buffer.records) {
         if (offset + record_size > buffer_size) {
             break;  // Buffer full
+        }
+
+        if (debug_count < 5) {
+            std::cerr << "[BlockWriter] Record[" << debug_count << "] at offset " << offset
+                      << ": time_offset=" << record.time_offset << std::endl;
         }
 
         // Write time_offset (3 bytes, little-endian)
@@ -82,12 +92,14 @@ uint64_t BlockWriter::serializeRecords(const TagBuffer& tag_buffer,
 
         offset += record_size;
         stats_.records_written++;
+        debug_count++;
     }
 
+    std::cerr << "[BlockWriter] Total bytes written: " << offset << std::endl;
     return offset;
 }
 
-BlockWriteResult BlockWriter::writeBlock(uint32_t chunk_id,
+BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
                                         uint32_t data_block_index,
                                         const TagBuffer& tag_buffer) {
     // Validate data_block_index
@@ -97,11 +109,16 @@ BlockWriteResult BlockWriter::writeBlock(uint32_t chunk_id,
     }
 
     // Calculate actual block_index (meta_blocks + data_block_index)
-    uint32_t block_index = layout_.meta_blocks + data_block_index;
+    uint32_t physical_block_index = layout_.meta_blocks + data_block_index;
 
-    // Calculate physical offset
-    uint64_t block_offset = LayoutCalculator::calculateBlockOffset(
-        chunk_id, block_index, layout_, container_base_);
+    // Calculate physical offset directly from chunk_offset
+    uint64_t block_offset = chunk_offset +
+                           static_cast<uint64_t>(physical_block_index) * layout_.block_size_bytes;
+
+    std::cerr << "[BlockWriter] Writing to block_offset=" << block_offset
+              << " (chunk_offset=" << chunk_offset
+              << ", physical_block_index=" << physical_block_index
+              << ", block_size=" << layout_.block_size_bytes << ")" << std::endl;
 
     // Allocate aligned buffer for block
     AlignedBuffer buffer(layout_.block_size_bytes);

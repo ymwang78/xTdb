@@ -30,8 +30,8 @@ DirBuildResult DirectoryBuilder::load() {
     uint64_t dir_size_bytes = layout_.data_blocks * sizeof(BlockDirEntryV16);
     uint64_t buffer_size = alignToExtent(dir_size_bytes);
 
-    // Calculate directory offset (starts at block 1)
-    uint64_t dir_offset = chunk_offset_ + layout_.block_size_bytes;
+    // Calculate directory offset (starts right after chunk header)
+    uint64_t dir_offset = chunk_offset_ + kChunkHeaderSize;
 
     // Read directory from disk
     AlignedBuffer buffer(buffer_size);
@@ -96,28 +96,26 @@ DirBuildResult DirectoryBuilder::writeDirectory() {
     // Calculate directory size
     uint64_t dir_size_bytes = entries_.size() * sizeof(BlockDirEntryV16);
 
-    // Calculate directory offset (starts at block 1 in meta region)
-    // Block 0 contains chunk header, directory starts at block 1
-    uint64_t dir_offset = chunk_offset_ + layout_.block_size_bytes;
+    // For aligned I/O, we need to write full meta blocks
+    // Read the existing meta region first (to preserve chunk header)
+    uint64_t meta_region_size = layout_.meta_blocks * layout_.block_size_bytes;
+    AlignedBuffer buffer(meta_region_size);
 
-    // Create aligned buffer for directory
-    // Round up to extent alignment
-    uint64_t buffer_size = alignToExtent(dir_size_bytes);
-    AlignedBuffer buffer(buffer_size);
-
-    // Copy entries to buffer
-    std::memcpy(buffer.data(), entries_.data(), dir_size_bytes);
-
-    // Zero padding
-    if (buffer_size > dir_size_bytes) {
-        std::memset(static_cast<char*>(buffer.data()) + dir_size_bytes,
-                   0,
-                   buffer_size - dir_size_bytes);
+    // Read existing meta region (includes chunk header)
+    IOResult read_result = io_->read(buffer.data(), meta_region_size, chunk_offset_);
+    if (read_result != IOResult::SUCCESS) {
+        setError("Failed to read meta region: " + io_->getLastError());
+        return DirBuildResult::ERROR_IO_FAILED;
     }
 
-    // Write to disk
-    IOResult result = io_->write(buffer.data(), buffer_size, dir_offset);
-    if (result != IOResult::SUCCESS) {
+    // Update directory portion (starts after chunk header)
+    std::memcpy(static_cast<char*>(buffer.data()) + kChunkHeaderSize,
+                entries_.data(),
+                dir_size_bytes);
+
+    // Write back the entire meta region
+    IOResult write_result = io_->write(buffer.data(), meta_region_size, chunk_offset_);
+    if (write_result != IOResult::SUCCESS) {
         setError("Failed to write directory: " + io_->getLastError());
         return DirBuildResult::ERROR_IO_FAILED;
     }
