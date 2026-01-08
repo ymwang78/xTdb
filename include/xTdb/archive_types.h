@@ -55,6 +55,7 @@ inline uint32_t getRecommendedRetentionDays(ArchiveLevel level) {
 /// Archive metadata
 struct ArchiveMetadata {
     ArchiveLevel level;
+    uint64_t container_id;  // Container ID for this archive
     uint64_t resampling_interval_us;
     uint32_t retention_days;
     uint64_t start_ts_us;  // Archive time range start
@@ -64,6 +65,7 @@ struct ArchiveMetadata {
 
     ArchiveMetadata()
         : level(ArchiveLevel::ARCHIVE_RAW),
+          container_id(0),
           resampling_interval_us(0),
           retention_days(0),
           start_ts_us(0),

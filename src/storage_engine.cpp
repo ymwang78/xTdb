@@ -4,10 +4,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <cerrno>
 #include <cstring>
 #include <algorithm>
 #include <iostream>
 #include <chrono>
+#ifdef __linux__
+#include <linux/falloc.h>
+#endif
 
 namespace xtdb {
 
@@ -168,6 +172,41 @@ EngineResult StorageEngine::mountContainers() {
             }
         }
 
+        // Pre-allocate container space for better performance
+        // This ensures the entire container capacity is allocated upfront
+        uint64_t container_capacity = header.capacity_extents * kExtentSizeBytes;
+        int fd = io_->getFd();
+        if (fd >= 0) {
+#ifdef __linux__
+            // Use fallocate on Linux for efficient space allocation
+            int fallocate_result = fallocate(fd, 0, 0, container_capacity);
+            if (fallocate_result != 0) {
+                // fallocate failed, try fallback method
+                std::cerr << "[StorageEngine] Warning: fallocate failed (errno=" << errno
+                          << "), using fallback pre-allocation method" << std::endl;
+                // Fallback: write a single byte at the end to extend file
+                AlignedBuffer end_buf(kExtentSizeBytes);
+                std::memset(end_buf.data(), 0, kExtentSizeBytes);
+                io_result = io_->write(end_buf.data(), kExtentSizeBytes,
+                                      container_capacity - kExtentSizeBytes);
+                if (io_result != IOResult::SUCCESS) {
+                    std::cerr << "[StorageEngine] Warning: Container pre-allocation failed, "
+                              << "continuing without pre-allocation" << std::endl;
+                }
+            }
+#else
+            // Non-Linux: use fallback method (write at end)
+            AlignedBuffer end_buf(kExtentSizeBytes);
+            std::memset(end_buf.data(), 0, kExtentSizeBytes);
+            io_result = io_->write(end_buf.data(), kExtentSizeBytes,
+                                  container_capacity - kExtentSizeBytes);
+            if (io_result != IOResult::SUCCESS) {
+                std::cerr << "[StorageEngine] Warning: Container pre-allocation failed, "
+                          << "continuing without pre-allocation" << std::endl;
+            }
+#endif
+        }
+
         // Register container
         ContainerInfo info;
         info.container_id = 0;
@@ -302,12 +341,93 @@ EngineResult StorageEngine::replayWAL() {
         return EngineResult::ERROR_WAL_OPEN_FAILED;
     }
 
-    // TODO: Implement WAL replay for rotating WAL
-    // For now, skip WAL replay as rotating WAL uses independent container
-    // and doesn't support replay yet. WAL replay would need to:
-    // 1. Scan all segments to find entries
-    // 2. Reconstruct tag buffers from entries
-    // 3. This is non-trivial and can be implemented later if needed
+    // Scan all segments to find entries
+    const std::vector<WALSegment>& segments = rotating_wal_->getSegments();
+
+    // Collect entries from all segments
+    std::unordered_map<uint32_t, std::vector<WALEntry>> entries_by_tag;
+    uint64_t total_entries_replayed = 0;
+
+    // Get AlignedIO for WAL container
+    std::string wal_path = config_.data_dir + "/wal_container.raw";
+    AlignedIO wal_io;
+    IOResult io_result = wal_io.open(wal_path, false, false);  // Read-only
+    if (io_result != IOResult::SUCCESS) {
+        // If WAL container doesn't exist or can't be opened, skip replay
+        return EngineResult::SUCCESS;
+    }
+
+    for (const auto& segment : segments) {
+        // Skip empty segments
+        if (segment.entry_count == 0 || segment.write_position == 0) {
+            continue;
+        }
+
+        // Create WAL reader for this segment
+        WALReader reader(&wal_io, segment.start_offset, segment.segment_size);
+
+        // Read all entries from this segment
+        WALEntry entry;
+        while (reader.readNext(entry) == WALResult::SUCCESS) {
+            // Group entries by tag_id
+            entries_by_tag[entry.tag_id].push_back(entry);
+            total_entries_replayed++;
+        }
+    }
+
+    // If no entries found, nothing to replay
+    if (total_entries_replayed == 0) {
+        return EngineResult::SUCCESS;
+    }
+
+    // Reconstruct and flush tag buffers
+    for (auto& [tag_id, entries] : entries_by_tag) {
+        // Sort entries by timestamp for correct ordering
+        std::sort(entries.begin(), entries.end(),
+                  [](const WALEntry& a, const WALEntry& b) {
+                      return a.timestamp_us < b.timestamp_us;
+                  });
+
+        // Reconstruct tag buffer
+        for (const auto& entry : entries) {
+            // Extract value based on value_type
+            double value_double = 0.0;
+            ValueType vt = static_cast<ValueType>(entry.value_type);
+            switch (vt) {
+                case ValueType::VT_BOOL:
+                    value_double = entry.value.bool_value ? 1.0 : 0.0;
+                    break;
+                case ValueType::VT_I32:
+                    value_double = static_cast<double>(entry.value.i32_value);
+                    break;
+                case ValueType::VT_F32:
+                    value_double = static_cast<double>(entry.value.f32_value);
+                    break;
+                case ValueType::VT_F64:
+                    value_double = entry.value.f64_value;
+                    break;
+            }
+
+            // Use writePoint to replay each entry
+            EngineResult result = writePoint(tag_id, entry.timestamp_us,
+                                            value_double, entry.quality);
+            if (result != EngineResult::SUCCESS) {
+                // Log error but continue with other entries
+                std::cerr << "[StorageEngine] Warning: Failed to replay WAL entry for tag "
+                          << tag_id << " at timestamp " << entry.timestamp_us << std::endl;
+            }
+        }
+    }
+
+    // Flush all pending tag buffers after replay
+    EngineResult flush_result = flush();
+    if (flush_result != EngineResult::SUCCESS) {
+        setError("Failed to flush buffers after WAL replay");
+        return flush_result;
+    }
+
+    std::cout << "[StorageEngine] WAL replay completed: " << total_entries_replayed
+              << " entries replayed for " << entries_by_tag.size() << " tags" << std::endl;
 
     return EngineResult::SUCCESS;
 }
@@ -344,11 +464,25 @@ EngineResult StorageEngine::verifyContainerHeader(const std::string& container_p
         return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
     }
 
-    // TODO Phase 10: Implement proper container pre-allocation
-    // For now, just verify the file exists and has a header
+    // Verify container has minimum size (header + initial space)
     if (static_cast<uint64_t>(st.st_size) < kExtentSizeBytes) {
         setError("Container file too small");
         return EngineResult::ERROR_CONTAINER_HEADER_INVALID;
+    }
+
+    // Calculate expected container capacity
+    uint64_t expected_capacity = header.capacity_extents * kExtentSizeBytes;
+
+    // Check if file size matches expected capacity
+    // Allow some tolerance for filesystem overhead
+    if (static_cast<uint64_t>(st.st_size) < expected_capacity) {
+        // File is smaller than expected capacity
+        // This could happen if container was not properly pre-allocated
+        // For now, log a warning but don't fail
+        std::cerr << "[StorageEngine] Warning: Container file size ("
+                  << st.st_size << " bytes) is smaller than declared capacity ("
+                  << expected_capacity << " bytes). Container may not be pre-allocated."
+                  << std::endl;
     }
 
     return EngineResult::SUCCESS;

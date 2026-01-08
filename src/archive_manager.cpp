@@ -13,8 +13,12 @@ ArchiveManager::~ArchiveManager() {
 bool ArchiveManager::registerArchive(const ArchiveMetadata& metadata,
                                      uint64_t container_id,
                                      const std::string& container_path) {
+    // Create a copy of metadata with container_id
+    ArchiveMetadata meta = metadata;
+    meta.container_id = container_id;
+
     // Add to archives map
-    archives_[metadata.level].push_back(metadata);
+    archives_[meta.level].push_back(meta);
 
     // Store container path
     container_paths_[container_id] = container_path;
@@ -98,7 +102,8 @@ size_t ArchiveManager::selectArchives(const ArchiveQuery& query,
             // Create selection
             ArchiveSelection sel;
             sel.level = level;
-            sel.container_id = 0;  // TODO: Extract from archive metadata
+            sel.container_id = archive.container_id;
+            sel.container_path = container_paths_.at(archive.container_id);
             sel.start_ts_us = archive.start_ts_us;
             sel.end_ts_us = archive.end_ts_us;
             sel.resolution_us = getResamplingIntervalUs(level);
