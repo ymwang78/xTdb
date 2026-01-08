@@ -244,6 +244,15 @@ private:
     /// @return EngineResult
     EngineResult flushWALBatch(uint32_t tag_id);
 
+    /// Background WAL flush thread function (Phase 4)
+    void walFlushThreadFunc();
+
+    /// Start async WAL flush thread (Phase 4)
+    void startAsyncWALFlush();
+
+    /// Stop async WAL flush thread (Phase 4)
+    void stopAsyncWALFlush();
+
     EngineConfig config_;
     bool is_open_;
     std::string last_error_;
@@ -267,6 +276,13 @@ private:
     std::unordered_map<uint32_t, std::vector<WALEntry>> wal_batches_;  // Per-tag WAL batch
     std::mutex wal_batch_mutex_;                 // Protect wal_batches_
     static constexpr size_t kWALBatchSize = 100; // Batch size threshold
+
+    // Async WAL flush infrastructure (Phase 4)
+    std::unique_ptr<std::thread> wal_flush_thread_;  // Background WAL flush thread
+    std::atomic<bool> wal_flush_running_;            // Control flush thread
+    std::condition_variable wal_flush_cv_;           // Wake up flush thread
+    std::mutex wal_flush_mutex_;                     // For condition variable
+    static constexpr size_t kAsyncWALThreshold = 50; // Async flush at 50% full
 
     // Runtime state
     std::vector<ContainerInfo> containers_;      // All mounted containers

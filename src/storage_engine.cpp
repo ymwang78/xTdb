@@ -16,7 +16,8 @@
 namespace xtdb {
 
 StorageEngine::StorageEngine(const EngineConfig& config)
-    : config_(config), is_open_(false), next_io_index_(0), wal_entries_since_sync_(0) {
+    : config_(config), is_open_(false), next_io_index_(0), wal_flush_running_(false),
+      wal_entries_since_sync_(0) {
     // If layout not specified by user, calculate default layout based on RAW_16K
     if (config_.layout.block_size_bytes == 0 || config_.layout.chunk_size_bytes == 0) {
         config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K);
@@ -87,6 +88,9 @@ EngineResult StorageEngine::open() {
         return result;
     }
 
+    // Step 5: Start async WAL flush thread (Phase 4)
+    startAsyncWALFlush();
+
     is_open_ = true;
     return EngineResult::SUCCESS;
 }
@@ -95,6 +99,9 @@ void StorageEngine::close() {
     if (!is_open_) {
         return;
     }
+
+    // Phase 4: Stop async WAL flush thread
+    stopAsyncWALFlush();
 
     // Phase 3: Flush all pending WAL batches before closing
     std::vector<uint32_t> tags_with_wal_batches;
@@ -605,23 +612,23 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     entry.quality = quality;
 
     // Add to per-tag WAL batch
-    bool should_flush_wal = false;
+    // Phase 4: Use async flush - notify background thread instead of blocking
+    bool should_notify_flush = false;
     if (rotating_wal_) {
         std::lock_guard<std::mutex> wal_lock(wal_batch_mutex_);
         wal_batches_[tag_id].push_back(entry);
 
         // Check if batch is full (threshold: 100 entries)
+        // Background thread will flush at 50% threshold, but we also notify at 100%
         if (wal_batches_[tag_id].size() >= kWALBatchSize) {
-            should_flush_wal = true;
+            should_notify_flush = true;
         }
     }
 
-    // Flush WAL batch if threshold reached (outside lock)
-    if (should_flush_wal) {
-        EngineResult wal_flush_result = flushWALBatch(tag_id);
-        if (wal_flush_result != EngineResult::SUCCESS) {
-            return wal_flush_result;
-        }
+    // Notify background flush thread (non-blocking)
+    if (should_notify_flush) {
+        std::lock_guard<std::mutex> lock(wal_flush_mutex_);
+        wal_flush_cv_.notify_one();
     }
 
     // Step 2: Add point to memory buffer
@@ -706,6 +713,65 @@ EngineResult StorageEngine::flushWALBatch(uint32_t tag_id) {
     }
 
     return EngineResult::SUCCESS;
+}
+
+void StorageEngine::startAsyncWALFlush() {
+    wal_flush_running_.store(true);
+    wal_flush_thread_ = std::make_unique<std::thread>(&StorageEngine::walFlushThreadFunc, this);
+}
+
+void StorageEngine::stopAsyncWALFlush() {
+    if (!wal_flush_thread_) {
+        return;
+    }
+
+    // Signal thread to stop
+    wal_flush_running_.store(false);
+
+    // Wake up thread if sleeping
+    {
+        std::lock_guard<std::mutex> lock(wal_flush_mutex_);
+        wal_flush_cv_.notify_one();
+    }
+
+    // Wait for thread to finish
+    if (wal_flush_thread_->joinable()) {
+        wal_flush_thread_->join();
+    }
+
+    wal_flush_thread_.reset();
+}
+
+void StorageEngine::walFlushThreadFunc() {
+    // Phase 4: Background WAL flush thread
+    // Periodically checks for batches that need flushing
+    while (wal_flush_running_.load()) {
+        // Wait for 10ms or until notified
+        {
+            std::unique_lock<std::mutex> lock(wal_flush_mutex_);
+            wal_flush_cv_.wait_for(lock, std::chrono::milliseconds(10));
+        }
+
+        if (!wal_flush_running_.load()) {
+            break;
+        }
+
+        // Collect tags with batches >= kAsyncWALThreshold (50% of max)
+        std::vector<uint32_t> tags_to_flush;
+        {
+            std::lock_guard<std::mutex> lock(wal_batch_mutex_);
+            for (const auto& [tag_id, batch] : wal_batches_) {
+                if (batch.size() >= kAsyncWALThreshold) {
+                    tags_to_flush.push_back(tag_id);
+                }
+            }
+        }
+
+        // Flush batches asynchronously
+        for (uint32_t tag_id : tags_to_flush) {
+            flushWALBatch(tag_id);  // Ignore errors in background thread
+        }
+    }
 }
 
 EngineResult StorageEngine::flush() {
@@ -985,7 +1051,7 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
         }
     }  // Release buffers lock before disk I/O
 
-    // Step 2: Read from disk blocks
+    // Step 2: Read from disk blocks (Phase 4: Parallel)
     // Acquire shared lock for thread-safe active_chunk reading
     uint64_t chunk_offset;
     uint32_t blocks_used;
@@ -996,6 +1062,7 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
     }
 
     if (blocks_used > 0) {
+        // Step 2.1: Scan directory to find matching blocks
         RawScanner scanner(io_.get());
         ScannedChunk scanned_chunk;
 
@@ -1004,8 +1071,8 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
                                                    scanned_chunk);
 
         if (scan_result == ScanResult::SUCCESS) {
-            BlockReader reader(io_.get(), config_.layout);
-
+            // Step 2.2: Filter blocks by tag and time range
+            std::vector<ScannedBlock> blocks_to_read;
             for (const auto& block_info : scanned_chunk.blocks) {
                 if (block_info.tag_id != tag_id) {
                     continue;
@@ -1016,31 +1083,82 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
                     continue;
                 }
 
-                std::vector<MemRecord> records;
-                ReadResult read_result = reader.readBlock(
-                    chunk_offset,
-                    block_info.block_index,
-                    block_info.tag_id,
-                    block_info.start_ts_us,
-                    block_info.time_unit,
-                    block_info.value_type,
-                    block_info.record_count,
-                    records
-                );
+                blocks_to_read.push_back(block_info);
+            }
 
-                if (read_result == ReadResult::SUCCESS) {
-                    read_stats_.blocks_read++;
+            // Step 2.3: Parallel block reading using thread pool
+            if (!blocks_to_read.empty()) {
+                struct BlockReadResult {
+                    bool success;
+                    std::vector<QueryPoint> points;
+                    std::string error_msg;
+                };
 
-                    for (const auto& record : records) {
-                        int64_t timestamp_us = block_info.start_ts_us +
-                                             static_cast<int64_t>(record.time_offset) * 1000;
+                std::vector<std::future<BlockReadResult>> read_futures;
+                read_futures.reserve(blocks_to_read.size());
 
-                        if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
-                            results.emplace_back(timestamp_us,
-                                               record.value.f64_value,
-                                               record.quality);
-                            read_stats_.points_read_disk++;
+                for (const auto& block_info : blocks_to_read) {
+                    // Get per-thread I/O instance
+                    size_t io_index = next_io_index_.fetch_add(1) % io_pool_.size();
+                    AlignedIO* thread_io = io_pool_[io_index].get();
+
+                    // Submit block read task
+                    auto future = flush_pool_->submit([this, chunk_offset, block_info,
+                                                       thread_io, start_ts_us, end_ts_us]() -> BlockReadResult {
+                        BlockReadResult result;
+                        result.success = false;
+
+                        // Read block using per-thread BlockReader
+                        BlockReader reader(thread_io, config_.layout);
+
+                        std::vector<MemRecord> records;
+                        ReadResult read_result = reader.readBlock(
+                            chunk_offset,
+                            block_info.block_index,
+                            block_info.tag_id,
+                            block_info.start_ts_us,
+                            block_info.time_unit,
+                            block_info.value_type,
+                            block_info.record_count,
+                            records
+                        );
+
+                        if (read_result != ReadResult::SUCCESS) {
+                            result.error_msg = "Failed to read block";
+                            return result;
                         }
+
+                        // Filter and convert records to QueryPoint
+                        for (const auto& record : records) {
+                            int64_t timestamp_us = block_info.start_ts_us +
+                                                 static_cast<int64_t>(record.time_offset) * 1000;
+
+                            if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
+                                result.points.emplace_back(timestamp_us,
+                                                          record.value.f64_value,
+                                                          record.quality);
+                            }
+                        }
+
+                        result.success = true;
+                        return result;
+                    });
+
+                    read_futures.push_back(std::move(future));
+                }
+
+                // Step 2.4: Wait for all reads and aggregate results
+                for (auto& future : read_futures) {
+                    BlockReadResult read_result = future.get();
+
+                    if (read_result.success) {
+                        read_stats_.blocks_read++;
+                        read_stats_.points_read_disk += read_result.points.size();
+
+                        // Append results
+                        results.insert(results.end(),
+                                      read_result.points.begin(),
+                                      read_result.points.end());
                     }
                 }
             }
