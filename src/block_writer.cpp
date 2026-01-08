@@ -5,6 +5,44 @@
 
 namespace xtdb {
 
+// ============================================================================
+// CRC32 Implementation (Simple polynomial-based)
+// ============================================================================
+
+static uint32_t crc32_table[256];
+static bool crc32_table_initialized = false;
+
+static void init_crc32_table() {
+    if (crc32_table_initialized) return;
+
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ 0xEDB88320u;
+            } else {
+                crc >>= 1;
+            }
+        }
+        crc32_table[i] = crc;
+    }
+    crc32_table_initialized = true;
+}
+
+static uint32_t calculateCRC32(const void* data, uint64_t size) {
+    init_crc32_table();
+
+    const uint8_t* ptr = static_cast<const uint8_t*>(data);
+    uint32_t crc = 0xFFFFFFFFu;
+
+    for (uint64_t i = 0; i < size; i++) {
+        uint8_t index = (crc ^ ptr[i]) & 0xFF;
+        crc = (crc >> 8) ^ crc32_table[index];
+    }
+
+    return crc ^ 0xFFFFFFFFu;
+}
+
 BlockWriter::BlockWriter(AlignedIO* io,
                         const ChunkLayout& layout,
                         uint64_t container_base)
@@ -90,7 +128,8 @@ uint64_t BlockWriter::serializeRecords(const TagBuffer& tag_buffer,
 
 BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
                                         uint32_t data_block_index,
-                                        const TagBuffer& tag_buffer) {
+                                        const TagBuffer& tag_buffer,
+                                        uint32_t* out_crc32) {
     // Validate data_block_index
     if (data_block_index >= layout_.data_blocks) {
         setError("Data block index out of range");
@@ -187,6 +226,11 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
     if (data_size > layout_.block_size_bytes) {
         setError("Buffer too large for block");
         return BlockWriteResult::ERROR_BUFFER_TOO_LARGE;
+    }
+
+    // Calculate CRC32 of the entire block if requested
+    if (out_crc32 != nullptr) {
+        *out_crc32 = calculateCRC32(buffer.data(), layout_.block_size_bytes);
     }
 
     // Write to disk (data block only, no directory update)

@@ -48,10 +48,12 @@ public:
     /// @param chunk_id Chunk ID
     /// @param data_block_index Data block index (0-based, relative to data region)
     /// @param tag_buffer Tag buffer with records
+    /// @param out_crc32 Output: CRC32 of written block data (optional)
     /// @return BlockWriteResult
     BlockWriteResult writeBlock(uint64_t chunk_offset,
                                 uint32_t data_block_index,
-                                const TagBuffer& tag_buffer);
+                                const TagBuffer& tag_buffer,
+                                uint32_t* out_crc32 = nullptr);
 
     /// Calculate record size based on value type
     /// @param value_type Value type

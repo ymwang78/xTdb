@@ -544,9 +544,11 @@ EngineResult StorageEngine::flush() {
         BlockWriter writer(io_.get(), config_.layout, kExtentSizeBytes);
 
         uint32_t data_block_index = active_chunk_.blocks_used;
+        uint32_t data_crc32 = 0;
         BlockWriteResult write_result = writer.writeBlock(active_chunk_.chunk_offset,
                                                          data_block_index,
-                                                         tag_buffer);
+                                                         tag_buffer,
+                                                         &data_crc32);
         if (write_result != BlockWriteResult::SUCCESS) {
             setError("Failed to write block: " + writer.getLastError());
             return EngineResult::ERROR_INVALID_DATA;
@@ -589,7 +591,7 @@ EngineResult StorageEngine::flush() {
             tag_buffer.time_unit,
             tag_buffer.value_type,
             static_cast<uint32_t>(tag_buffer.records.size()),
-            0,  // TODO: Calculate CRC32
+            data_crc32,  // Use calculated CRC32
             tag_buffer.encoding_type,
             encoding_param1,
             encoding_param2
@@ -799,9 +801,14 @@ EngineResult StorageEngine::reclaimDeprecatedChunks() {
         // Check if chunk is deprecated
         if (std::memcmp(chunk_header.magic, kRawChunkMagic, 8) == 0 &&
             chunkIsDeprecated(chunk_header.flags)) {
-            // TODO: Implement freeChunk() in StateMutator to mark as FREE
-            // For now, we just count deprecated chunks found
-            maintenance_stats_.chunks_freed++;
+            // Mark chunk as free for reuse
+            MutateResult result = mutator_->markChunkFree(chunk_offset);
+            if (result == MutateResult::SUCCESS) {
+                maintenance_stats_.chunks_freed++;
+            } else {
+                std::cerr << "[StorageEngine] Failed to free deprecated chunk at offset "
+                          << chunk_offset << ": " << mutator_->getLastError() << std::endl;
+            }
         }
 
         // Move to next chunk
@@ -945,9 +952,11 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
     BlockWriter writer(io_.get(), config_.layout, kExtentSizeBytes);
 
     uint32_t data_block_index = active_chunk_.blocks_used;
+    uint32_t data_crc32 = 0;
     BlockWriteResult write_result = writer.writeBlock(active_chunk_.chunk_offset,
                                                      data_block_index,
-                                                     tag_buffer);
+                                                     tag_buffer,
+                                                     &data_crc32);
     if (write_result != BlockWriteResult::SUCCESS) {
         setError("Failed to write block: " + writer.getLastError());
         return EngineResult::ERROR_INVALID_DATA;
@@ -990,7 +999,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
         tag_buffer.time_unit,
         tag_buffer.value_type,
         static_cast<uint32_t>(tag_buffer.records.size()),
-        0,  // TODO: Calculate CRC32
+        data_crc32,  // Use calculated CRC32
         tag_buffer.encoding_type,
         encoding_param1,
         encoding_param2
