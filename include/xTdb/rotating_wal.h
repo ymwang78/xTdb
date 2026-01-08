@@ -134,6 +134,12 @@ public:
     /// @return RotatingWALResult
     RotatingWALResult append(const WALEntry& entry);
 
+    /// Batch append entries to WAL (Phase 3)
+    /// More efficient than individual append for multiple entries
+    /// @param entries Vector of entries to append
+    /// @return RotatingWALResult
+    RotatingWALResult batchAppend(const std::vector<WALEntry>& entries);
+
     /// Sync WAL to disk (fsync)
     /// @return RotatingWALResult
     RotatingWALResult sync();

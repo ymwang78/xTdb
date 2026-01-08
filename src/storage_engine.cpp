@@ -96,6 +96,21 @@ void StorageEngine::close() {
         return;
     }
 
+    // Phase 3: Flush all pending WAL batches before closing
+    std::vector<uint32_t> tags_with_wal_batches;
+    {
+        std::lock_guard<std::mutex> lock(wal_batch_mutex_);
+        for (const auto& [tag_id, batch] : wal_batches_) {
+            if (!batch.empty()) {
+                tags_with_wal_batches.push_back(tag_id);
+            }
+        }
+    }
+
+    for (uint32_t tag_id : tags_with_wal_batches) {
+        flushWALBatch(tag_id);  // Ignore errors on close
+    }
+
     // Sync and close rotating WAL before closing I/O
     if (rotating_wal_) {
         rotating_wal_->sync();
@@ -580,7 +595,8 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
         return EngineResult::ERROR_ENGINE_NOT_OPEN;
     }
 
-    // Step 1: WAL Append (for crash recovery)
+    // Step 1: WAL Batch Buffering (Phase 3)
+    // Instead of directly appending to WAL, batch entries per-tag
     WALEntry entry;
     entry.tag_id = tag_id;
     entry.timestamp_us = timestamp_us;
@@ -588,19 +604,23 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     entry.value.f64_value = value;
     entry.quality = quality;
 
-    // Write to Rotating WAL
+    // Add to per-tag WAL batch
+    bool should_flush_wal = false;
     if (rotating_wal_) {
-        RotatingWALResult wal_result = rotating_wal_->append(entry);
-        if (wal_result != RotatingWALResult::SUCCESS) {
-            setError("WAL append failed: " + rotating_wal_->getLastError());
-            return EngineResult::ERROR_WAL_OPEN_FAILED;
-        }
+        std::lock_guard<std::mutex> wal_lock(wal_batch_mutex_);
+        wal_batches_[tag_id].push_back(entry);
 
-        // Periodic WAL sync (every 10000 entries for better performance)
-        wal_entries_since_sync_++;
-        if (wal_entries_since_sync_ >= 10000) {
-            rotating_wal_->sync();
-            wal_entries_since_sync_ = 0;
+        // Check if batch is full (threshold: 100 entries)
+        if (wal_batches_[tag_id].size() >= kWALBatchSize) {
+            should_flush_wal = true;
+        }
+    }
+
+    // Flush WAL batch if threshold reached (outside lock)
+    if (should_flush_wal) {
+        EngineResult wal_flush_result = flushWALBatch(tag_id);
+        if (wal_flush_result != EngineResult::SUCCESS) {
+            return wal_flush_result;
         }
     }
 
@@ -651,10 +671,65 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     return EngineResult::SUCCESS;
 }
 
+EngineResult StorageEngine::flushWALBatch(uint32_t tag_id) {
+    if (!rotating_wal_) {
+        return EngineResult::SUCCESS;  // No WAL, skip
+    }
+
+    // Get batch entries for this tag
+    std::vector<WALEntry> batch_to_flush;
+    {
+        std::lock_guard<std::mutex> lock(wal_batch_mutex_);
+        auto it = wal_batches_.find(tag_id);
+        if (it != wal_batches_.end() && !it->second.empty()) {
+            batch_to_flush = std::move(it->second);
+            it->second.clear();  // Clear the batch
+        }
+    }
+
+    if (batch_to_flush.empty()) {
+        return EngineResult::SUCCESS;
+    }
+
+    // Batch append to WAL
+    RotatingWALResult wal_result = rotating_wal_->batchAppend(batch_to_flush);
+    if (wal_result != RotatingWALResult::SUCCESS) {
+        setError("WAL batch append failed: " + rotating_wal_->getLastError());
+        return EngineResult::ERROR_WAL_OPEN_FAILED;
+    }
+
+    // Periodic WAL sync (every 10000 entries for better performance)
+    wal_entries_since_sync_ += batch_to_flush.size();
+    if (wal_entries_since_sync_ >= 10000) {
+        rotating_wal_->sync();
+        wal_entries_since_sync_ = 0;
+    }
+
+    return EngineResult::SUCCESS;
+}
+
 EngineResult StorageEngine::flush() {
     if (!is_open_) {
         setError("Engine not open");
         return EngineResult::ERROR_ENGINE_NOT_OPEN;
+    }
+
+    // Phase 3: Flush all pending WAL batches before flushing buffers
+    std::vector<uint32_t> tags_with_wal_batches;
+    {
+        std::lock_guard<std::mutex> lock(wal_batch_mutex_);
+        for (const auto& [tag_id, batch] : wal_batches_) {
+            if (!batch.empty()) {
+                tags_with_wal_batches.push_back(tag_id);
+            }
+        }
+    }
+
+    for (uint32_t tag_id : tags_with_wal_batches) {
+        EngineResult wal_result = flushWALBatch(tag_id);
+        if (wal_result != EngineResult::SUCCESS) {
+            return wal_result;
+        }
     }
 
     // Phase 2: Parallel flush implementation

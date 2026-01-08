@@ -239,6 +239,11 @@ private:
     /// @return EngineResult
     EngineResult flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffer);
 
+    /// Flush WAL batch for a tag (Phase 3)
+    /// @param tag_id Tag ID to flush WAL batch
+    /// @return EngineResult
+    EngineResult flushWALBatch(uint32_t tag_id);
+
     EngineConfig config_;
     bool is_open_;
     std::string last_error_;
@@ -257,6 +262,11 @@ private:
     mutable std::shared_mutex buffers_mutex_;    // Reader-writer lock for buffers_
     std::mutex active_chunk_mutex_;              // Protect active_chunk_ updates
     std::atomic<size_t> next_io_index_;          // Round-robin I/O allocation
+
+    // WAL batching infrastructure (Phase 3)
+    std::unordered_map<uint32_t, std::vector<WALEntry>> wal_batches_;  // Per-tag WAL batch
+    std::mutex wal_batch_mutex_;                 // Protect wal_batches_
+    static constexpr size_t kWALBatchSize = 100; // Batch size threshold
 
     // Runtime state
     std::vector<ContainerInfo> containers_;      // All mounted containers

@@ -298,6 +298,79 @@ RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
     return RotatingWALResult::SUCCESS;
 }
 
+RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries) {
+    if (!is_open_) {
+        setError("WAL not open");
+        return RotatingWALResult::ERROR_IO_FAILED;
+    }
+
+    if (entries.empty()) {
+        return RotatingWALResult::SUCCESS;
+    }
+
+    // Phase 3: Batch append optimization
+    // Write all entries in one batch to reduce function call overhead
+    for (const auto& entry : entries) {
+        // Validate entry
+        if (entry.tag_id == 0) {
+            setError("Invalid entry: tag_id cannot be 0");
+            return RotatingWALResult::ERROR_INVALID_ENTRY;
+        }
+
+        // Check if current segment has space
+        WALSegment& segment = segments_[current_segment_id_];
+
+        // If segment is full or close to full, rotate
+        if (segment.getAvailableSpace() < sizeof(WALEntry) + kExtentSizeBytes) {
+            RotatingWALResult result = rotateSegment();
+            if (result != RotatingWALResult::SUCCESS) {
+                return result;
+            }
+            // Re-fetch segment reference after rotation
+            segment = segments_[current_segment_id_];
+        }
+
+        // Append to current writer
+        WALResult wal_result = current_writer_->append(entry);
+        if (wal_result != WALResult::SUCCESS) {
+            setError("WAL write failed: " + current_writer_->getLastError());
+            return RotatingWALResult::ERROR_IO_FAILED;
+        }
+
+        // Update segment metadata
+        uint64_t writer_offset = current_writer_->getCurrentOffset();
+
+        // Verify writer offset is within current segment bounds
+        if (writer_offset < segment.start_offset ||
+            writer_offset >= segment.start_offset + segment.segment_size) {
+            std::cerr << "[batchAppend] FATAL: Writer offset " << writer_offset
+                      << " is OUTSIDE current segment " << current_segment_id_ << " bounds"
+                      << " [" << segment.start_offset << ", "
+                      << (segment.start_offset + segment.segment_size) << ")" << std::endl;
+            setError("Writer offset out of bounds");
+            return RotatingWALResult::ERROR_IO_FAILED;
+        }
+
+        uint64_t new_write_pos = writer_offset - segment.start_offset;
+        segment.write_position = new_write_pos;
+        segment.entry_count++;
+        segment.tag_ids.insert(entry.tag_id);
+
+        if (entry.timestamp_us < segment.min_timestamp_us) {
+            segment.min_timestamp_us = entry.timestamp_us;
+        }
+        if (entry.timestamp_us > segment.max_timestamp_us) {
+            segment.max_timestamp_us = entry.timestamp_us;
+        }
+
+        // Update statistics
+        stats_.total_entries_written++;
+        stats_.total_bytes_written += sizeof(WALEntry);
+    }
+
+    return RotatingWALResult::SUCCESS;
+}
+
 RotatingWALResult RotatingWAL::sync() {
     if (!is_open_ || !current_writer_) {
         setError("WAL not open");
