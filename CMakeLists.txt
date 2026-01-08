@@ -55,6 +55,7 @@ add_library(xtdb_core
     src/quantized_16_decoder.cpp
     src/resampling_engine.cpp
     src/archive_manager.cpp
+    src/thread_pool.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -63,6 +64,7 @@ target_include_directories(xtdb_core PUBLIC
 
 target_link_libraries(xtdb_core PUBLIC
     SQLite::SQLite3
+    pthread
 )
 
 # ============================================================================

@@ -12,11 +12,15 @@
 #include "state_mutator.h"
 #include "rotating_wal.h"
 #include "wal_reader.h"
+#include "thread_pool.h"
 #include "struct_defs.h"
 #include <string>
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
+#include <shared_mutex>
+#include <atomic>
 
 namespace xtdb {
 
@@ -240,17 +244,24 @@ private:
     std::string last_error_;
 
     // Core components
-    std::unique_ptr<AlignedIO> io_;              // File I/O
+    std::unique_ptr<AlignedIO> io_;              // File I/O (main thread)
     std::unique_ptr<MetadataSync> metadata_;     // SQLite connection
     std::unique_ptr<StateMutator> mutator_;      // State machine
     std::unique_ptr<DirectoryBuilder> dir_builder_;  // Active chunk directory
     std::unique_ptr<RotatingWAL> rotating_wal_;  // Rotating WAL system
     std::unique_ptr<WALReader> wal_reader_;      // WAL reader
 
+    // Parallel execution infrastructure (Phase 2)
+    std::unique_ptr<ThreadPool> flush_pool_;     // Thread pool for parallel flush
+    std::vector<std::unique_ptr<AlignedIO>> io_pool_;  // Per-thread I/O instances
+    mutable std::shared_mutex buffers_mutex_;    // Reader-writer lock for buffers_
+    std::mutex active_chunk_mutex_;              // Protect active_chunk_ updates
+    std::atomic<size_t> next_io_index_;          // Round-robin I/O allocation
+
     // Runtime state
     std::vector<ContainerInfo> containers_;      // All mounted containers
-    ActiveChunkInfo active_chunk_;               // Current active chunk
-    std::unordered_map<uint32_t, TagBuffer> buffers_;  // Tag -> MemBuffer
+    ActiveChunkInfo active_chunk_;               // Current active chunk (protected by mutex)
+    std::unordered_map<uint32_t, TagBuffer> buffers_;  // Tag -> MemBuffer (protected by mutex)
     WriteStats write_stats_;                     // Write statistics
     ReadStats read_stats_;                       // Read statistics
     MaintenanceStats maintenance_stats_;         // Maintenance statistics

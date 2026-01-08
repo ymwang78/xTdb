@@ -16,7 +16,7 @@
 namespace xtdb {
 
 StorageEngine::StorageEngine(const EngineConfig& config)
-    : config_(config), is_open_(false), wal_entries_since_sync_(0) {
+    : config_(config), is_open_(false), next_io_index_(0), wal_entries_since_sync_(0) {
     // If layout not specified by user, calculate default layout based on RAW_16K
     if (config_.layout.block_size_bytes == 0 || config_.layout.chunk_size_bytes == 0) {
         config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K);
@@ -51,6 +51,28 @@ EngineResult StorageEngine::open() {
     result = mountContainers();
     if (result != EngineResult::SUCCESS) {
         return result;
+    }
+
+    // Step 2.5: Initialize parallel execution infrastructure
+    // Create thread pool with hardware concurrency
+    size_t num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) {
+        num_threads = 8;  // Fallback to 8 threads
+    }
+    flush_pool_ = std::make_unique<ThreadPool>(num_threads);
+
+    // Create per-thread I/O instances for parallel flush
+    // Each thread needs its own file descriptor for parallel writes
+    std::string container_path = config_.data_dir + "/container_0.raw";
+    io_pool_.reserve(num_threads);
+    for (size_t i = 0; i < num_threads; ++i) {
+        auto thread_io = std::make_unique<AlignedIO>();
+        IOResult io_result = thread_io->open(container_path, false, false);
+        if (io_result != IOResult::SUCCESS) {
+            setError("Failed to open per-thread I/O: " + thread_io->getLastError());
+            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        }
+        io_pool_.push_back(std::move(thread_io));
     }
 
     // Step 3: Restore active state
@@ -583,6 +605,8 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     }
 
     // Step 2: Add point to memory buffer
+    // Acquire unique lock for thread-safe buffer modification
+    std::unique_lock<std::shared_mutex> lock(buffers_mutex_);
 
     // Find or create MemBuffer for this tag
     auto it = buffers_.find(tag_id);
@@ -609,8 +633,12 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
 
     write_stats_.points_written++;
 
+    // Check if buffer needs flush before releasing lock
+    bool needs_flush = tag_buffer.records.size() >= 1000;
+    lock.unlock();  // Release lock before flush
+
     // Step 3: Check if buffer needs flush (threshold: 1000 records or ~16KB)
-    if (tag_buffer.records.size() >= 1000) {
+    if (needs_flush) {
         // Trigger flush for this buffer
         // For Phase 8 simplification, we flush synchronously
         // In production, this should be async via thread pool
@@ -629,13 +657,28 @@ EngineResult StorageEngine::flush() {
         return EngineResult::ERROR_ENGINE_NOT_OPEN;
     }
 
-    // Flush all non-empty buffers
-    for (auto& [tag_id, tag_buffer] : buffers_) {
-        if (tag_buffer.records.empty()) {
-            continue;
+    // Phase 2: Parallel flush implementation
+    // Step 1: Collect non-empty buffers and prepare for parallel flush
+    std::vector<std::pair<uint32_t, TagBuffer>> buffers_to_flush;
+    {
+        std::unique_lock<std::shared_mutex> buffers_lock(buffers_mutex_);
+        for (auto& [tag_id, tag_buffer] : buffers_) {
+            if (!tag_buffer.records.empty()) {
+                // Make a copy of the buffer to flush
+                buffers_to_flush.emplace_back(tag_id, tag_buffer);
+                // Clear the original buffer immediately to allow new writes
+                tag_buffer.records.clear();
+            }
         }
+    }  // Release buffers lock
 
-        // Check if we need to roll (allocate new chunk)
+    if (buffers_to_flush.empty()) {
+        return EngineResult::SUCCESS;
+    }
+
+    // Step 2: Check if we need to allocate more space
+    {
+        std::lock_guard<std::mutex> chunk_lock(active_chunk_mutex_);
         if (active_chunk_.blocks_used >= active_chunk_.blocks_total) {
             // Chunk is full, need to seal and allocate new one
 
@@ -673,62 +716,134 @@ EngineResult StorageEngine::flush() {
 
             write_stats_.chunks_allocated++;
         }
+    }  // Release chunk lock
 
-        // Write block to disk using BlockWriter
-        BlockWriter writer(io_.get(), config_.layout, kExtentSizeBytes);
+    // Step 3: Submit parallel block write tasks
+    // Structure to collect write results for batch directory update
+    struct WriteResult {
+        uint32_t tag_id;
+        uint32_t block_index;
+        uint32_t data_crc32;
+        int64_t block_start_ts;
+        int64_t block_end_ts;
+        TimeUnit time_unit;
+        ValueType value_type;
+        uint32_t record_count;
+        EncodingType encoding_type;
+        uint32_t encoding_param1;
+        uint32_t encoding_param2;
+        bool success;
+        std::string error_msg;
+    };
 
-        uint32_t data_block_index = active_chunk_.blocks_used;
-        uint32_t data_crc32 = 0;
-        BlockWriteResult write_result = writer.writeBlock(active_chunk_.chunk_offset,
-                                                         data_block_index,
-                                                         tag_buffer,
-                                                         &data_crc32);
-        if (write_result != BlockWriteResult::SUCCESS) {
-            setError("Failed to write block: " + writer.getLastError());
-            return EngineResult::ERROR_INVALID_DATA;
+    std::vector<std::future<WriteResult>> write_futures;
+    write_futures.reserve(buffers_to_flush.size());
+
+    // Submit each buffer flush as a parallel task
+    for (size_t i = 0; i < buffers_to_flush.size(); ++i) {
+        auto& [tag_id, tag_buffer] = buffers_to_flush[i];
+
+        // Allocate block index (thread-safe)
+        uint32_t block_index;
+        uint64_t chunk_offset;
+        {
+            std::lock_guard<std::mutex> chunk_lock(active_chunk_mutex_);
+            block_index = active_chunk_.blocks_used++;
+            chunk_offset = active_chunk_.chunk_offset;
         }
 
-        write_stats_.blocks_flushed++;
+        // Get per-thread I/O instance (round-robin)
+        size_t io_index = next_io_index_.fetch_add(1) % io_pool_.size();
+        AlignedIO* thread_io = io_pool_[io_index].get();
 
-        // Update directory entry using persistent dir_builder
-        if (!dir_builder_) {
-            setError("Directory builder not initialized");
-            return EngineResult::ERROR_INVALID_DATA;
-        }
+        // Submit task to thread pool
+        auto future = flush_pool_->submit([this, tag_id, tag_buffer, block_index,
+                                           chunk_offset, thread_io]() -> WriteResult {
+            WriteResult result;
+            result.tag_id = tag_id;
+            result.block_index = block_index;
+            result.success = false;
 
-        // Get timestamp range from tag_buffer
-        int64_t block_start_ts = tag_buffer.start_ts_us;
-        int64_t block_end_ts = tag_buffer.start_ts_us;
-        if (!tag_buffer.records.empty()) {
-            // Find the maximum time_offset to calculate end_ts
-            uint32_t max_offset = 0;
-            for (const auto& rec : tag_buffer.records) {
-                if (rec.time_offset > max_offset) {
-                    max_offset = rec.time_offset;
-                }
+            // Write block to disk using per-thread BlockWriter
+            BlockWriter writer(thread_io, config_.layout, kExtentSizeBytes);
+
+            BlockWriteResult write_result = writer.writeBlock(chunk_offset,
+                                                             block_index,
+                                                             tag_buffer,
+                                                             &result.data_crc32);
+            if (write_result != BlockWriteResult::SUCCESS) {
+                result.error_msg = "Failed to write block: " + writer.getLastError();
+                return result;
             }
-            block_end_ts = tag_buffer.start_ts_us + static_cast<int64_t>(max_offset) * 1000;
+
+            // Calculate timestamp range
+            result.block_start_ts = tag_buffer.start_ts_us;
+            result.block_end_ts = tag_buffer.start_ts_us;
+            if (!tag_buffer.records.empty()) {
+                uint32_t max_offset = 0;
+                for (const auto& rec : tag_buffer.records) {
+                    if (rec.time_offset > max_offset) {
+                        max_offset = rec.time_offset;
+                    }
+                }
+                result.block_end_ts = tag_buffer.start_ts_us +
+                                     static_cast<int64_t>(max_offset) * 1000;
+            }
+
+            // Store metadata for directory update
+            result.time_unit = tag_buffer.time_unit;
+            result.value_type = tag_buffer.value_type;
+            result.record_count = static_cast<uint32_t>(tag_buffer.records.size());
+            result.encoding_type = tag_buffer.encoding_type;
+
+            // Convert encoding parameters
+            float tolerance_f = static_cast<float>(tag_buffer.encoding_tolerance);
+            float compression_factor_f = static_cast<float>(tag_buffer.encoding_compression_factor);
+            std::memcpy(&result.encoding_param1, &tolerance_f, 4);
+            std::memcpy(&result.encoding_param2, &compression_factor_f, 4);
+
+            result.success = true;
+            return result;
+        });
+
+        write_futures.push_back(std::move(future));
+    }
+
+    // Step 4: Wait for all writes to complete
+    std::vector<WriteResult> write_results;
+    write_results.reserve(write_futures.size());
+
+    for (auto& future : write_futures) {
+        write_results.push_back(future.get());
+    }
+
+    // Step 5: Check for errors
+    for (const auto& result : write_results) {
+        if (!result.success) {
+            setError(result.error_msg);
+            return EngineResult::ERROR_INVALID_DATA;
         }
+    }
 
-        // Convert encoding parameters to uint32_t (store as float bits)
-        float tolerance_f = static_cast<float>(tag_buffer.encoding_tolerance);
-        float compression_factor_f = static_cast<float>(tag_buffer.encoding_compression_factor);
-        uint32_t encoding_param1, encoding_param2;
-        std::memcpy(&encoding_param1, &tolerance_f, 4);
-        std::memcpy(&encoding_param2, &compression_factor_f, 4);
+    // Step 6: Batch directory updates (single-threaded for now)
+    if (!dir_builder_) {
+        setError("Directory builder not initialized");
+        return EngineResult::ERROR_INVALID_DATA;
+    }
 
+    for (const auto& result : write_results) {
         DirBuildResult dir_result = dir_builder_->sealBlock(
-            data_block_index,
-            tag_id,
-            block_start_ts,
-            block_end_ts,
-            tag_buffer.time_unit,
-            tag_buffer.value_type,
-            static_cast<uint32_t>(tag_buffer.records.size()),
-            data_crc32,  // Use calculated CRC32
-            tag_buffer.encoding_type,
-            encoding_param1,
-            encoding_param2
+            result.block_index,
+            result.tag_id,
+            result.block_start_ts,
+            result.block_end_ts,
+            result.time_unit,
+            result.value_type,
+            result.record_count,
+            result.data_crc32,
+            result.encoding_type,
+            result.encoding_param1,
+            result.encoding_param2
         );
 
         if (dir_result != DirBuildResult::SUCCESS) {
@@ -736,22 +851,26 @@ EngineResult StorageEngine::flush() {
             return EngineResult::ERROR_INVALID_DATA;
         }
 
-        // Write directory to disk
-        dir_result = dir_builder_->writeDirectory();
-        if (dir_result != DirBuildResult::SUCCESS) {
-            setError("Failed to write directory: " + dir_builder_->getLastError());
-            return EngineResult::ERROR_INVALID_DATA;
-        }
+        // Update stats
+        write_stats_.blocks_flushed++;
 
-        // Update active chunk tracking
-        active_chunk_.blocks_used++;
-        if (active_chunk_.start_ts_us == 0) {
-            active_chunk_.start_ts_us = block_start_ts;
+        // Update active chunk timestamp tracking
+        {
+            std::lock_guard<std::mutex> chunk_lock(active_chunk_mutex_);
+            if (active_chunk_.start_ts_us == 0) {
+                active_chunk_.start_ts_us = result.block_start_ts;
+            }
+            if (result.block_end_ts > active_chunk_.end_ts_us) {
+                active_chunk_.end_ts_us = result.block_end_ts;
+            }
         }
-        active_chunk_.end_ts_us = block_end_ts;
+    }
 
-        // Clear buffer after successful write
-        tag_buffer.records.clear();
+    // Write directory to disk once (batch update)
+    DirBuildResult dir_result = dir_builder_->writeDirectory();
+    if (dir_result != DirBuildResult::SUCCESS) {
+        setError("Failed to write directory: " + dir_builder_->getLastError());
+        return EngineResult::ERROR_INVALID_DATA;
     }
 
     // Note: With rotating WAL, segment clearing is handled by
@@ -774,25 +893,38 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
     read_stats_.queries_executed++;
 
     // Step 1: Read from memory buffers (unflushed data)
-    auto it = buffers_.find(tag_id);
-    if (it != buffers_.end()) {
-        const TagBuffer& tag_buffer = it->second;
-        for (const auto& record : tag_buffer.records) {
-            int64_t timestamp_us = tag_buffer.start_ts_us +
-                                  static_cast<int64_t>(record.time_offset) * 1000;
-            if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
-                results.emplace_back(timestamp_us, record.value.f64_value, record.quality);
-                read_stats_.points_read_memory++;
+    // Acquire shared lock for thread-safe buffer reading
+    {
+        std::shared_lock<std::shared_mutex> lock(buffers_mutex_);
+        auto it = buffers_.find(tag_id);
+        if (it != buffers_.end()) {
+            const TagBuffer& tag_buffer = it->second;
+            for (const auto& record : tag_buffer.records) {
+                int64_t timestamp_us = tag_buffer.start_ts_us +
+                                      static_cast<int64_t>(record.time_offset) * 1000;
+                if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
+                    results.emplace_back(timestamp_us, record.value.f64_value, record.quality);
+                    read_stats_.points_read_memory++;
+                }
             }
         }
-    }
+    }  // Release buffers lock before disk I/O
 
     // Step 2: Read from disk blocks
-    if (active_chunk_.blocks_used > 0) {
+    // Acquire shared lock for thread-safe active_chunk reading
+    uint64_t chunk_offset;
+    uint32_t blocks_used;
+    {
+        std::lock_guard<std::mutex> lock(active_chunk_mutex_);
+        chunk_offset = active_chunk_.chunk_offset;
+        blocks_used = active_chunk_.blocks_used;
+    }
+
+    if (blocks_used > 0) {
         RawScanner scanner(io_.get());
         ScannedChunk scanned_chunk;
 
-        ScanResult scan_result = scanner.scanChunk(active_chunk_.chunk_offset,
+        ScanResult scan_result = scanner.scanChunk(chunk_offset,
                                                    config_.layout,
                                                    scanned_chunk);
 
@@ -811,7 +943,7 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
 
                 std::vector<MemRecord> records;
                 ReadResult read_result = reader.readBlock(
-                    active_chunk_.chunk_offset,
+                    chunk_offset,
                     block_info.block_index,
                     block_info.tag_id,
                     block_info.start_ts_us,
