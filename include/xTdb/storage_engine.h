@@ -10,7 +10,7 @@
 #include "raw_scanner.h"
 #include "block_reader.h"
 #include "state_mutator.h"
-#include "wal_writer.h"
+#include "rotating_wal.h"
 #include "wal_reader.h"
 #include "struct_defs.h"
 #include <string>
@@ -223,6 +223,18 @@ private:
     /// Set error message
     void setError(const std::string& message);
 
+    /// Handle WAL segment full callback
+    /// @param segment_id Segment ID that is full
+    /// @param tag_ids Tag IDs in the segment that need flushing
+    /// @return true if flush succeeded, false otherwise
+    bool handleSegmentFull(uint32_t segment_id, const std::set<uint32_t>& tag_ids);
+
+    /// Flush single tag buffer to disk
+    /// @param tag_id Tag ID to flush
+    /// @param tag_buffer Tag buffer to flush
+    /// @return EngineResult
+    EngineResult flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffer);
+
     EngineConfig config_;
     bool is_open_;
     std::string last_error_;
@@ -232,7 +244,7 @@ private:
     std::unique_ptr<MetadataSync> metadata_;     // SQLite connection
     std::unique_ptr<StateMutator> mutator_;      // State machine
     std::unique_ptr<DirectoryBuilder> dir_builder_;  // Active chunk directory
-    std::unique_ptr<WALWriter> wal_writer_;      // WAL writer
+    std::unique_ptr<RotatingWAL> rotating_wal_;  // Rotating WAL system
     std::unique_ptr<WALReader> wal_reader_;      // WAL reader
 
     // Runtime state
