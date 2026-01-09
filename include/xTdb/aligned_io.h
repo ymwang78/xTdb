@@ -15,11 +15,11 @@ namespace xtdb {
 /// I/O operation result
 enum class IOResult {
     SUCCESS = 0,
-    ERROR_OPEN_FAILED,
-    ERROR_ALIGNMENT,      // Buffer or offset not 16KB-aligned
-    ERROR_IO_FAILED,
-    ERROR_INVALID_FD,
-    ERROR_PREALLOCATE_FAILED
+    ERR_OPENFD_FAILED,
+    ERR_ALIGNMENT,      // Buffer or offset not 16KB-aligned
+    ERR_IO_FAILED,
+    ERR_INVALID_FD,
+    ERR_PREALLOCATE_FAILED
 };
 
 /// I/O statistics

@@ -226,7 +226,7 @@ TEST_F(ResamplingTest, EmptyInput) {
 
     auto result = engine.resample(0, records, resampled);
 
-    EXPECT_EQ(ResampleResult::ERROR_EMPTY_INPUT, result);
+    EXPECT_EQ(ResampleResult::ERR_EMPTY_INPUT, result);
     EXPECT_FALSE(engine.getLastError().empty());
 }
 
@@ -245,7 +245,7 @@ TEST_F(ResamplingTest, InvalidInterval) {
     std::vector<ResampledPoint> resampled;
     auto result = engine.resample(0, records, resampled);
 
-    EXPECT_EQ(ResampleResult::ERROR_INVALID_INTERVAL, result);
+    EXPECT_EQ(ResampleResult::ERR_INVALID_INTERVAL, result);
 }
 
 // Test quality averaging

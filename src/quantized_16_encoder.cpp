@@ -48,7 +48,7 @@ Quantized16Encoder::EncodeResult Quantized16Encoder::encode(
     // Validate range
     if (range_ <= 0.0 || !std::isfinite(range_)) {
         setError("Invalid range: high must be > low");
-        return EncodeResult::ERROR_INVALID_RANGE;
+        return EncodeResult::ERR_INVALID_RANGE;
     }
 
     // Calculate original size (assuming F64 storage: 4B time + 8B value + 1B quality = 13B)
@@ -65,7 +65,7 @@ Quantized16Encoder::EncodeResult Quantized16Encoder::encode(
             setError("Value out of range: " + std::to_string(rec.value.f64_value) +
                     " (range: [" + std::to_string(low_extreme_) + ", " +
                     std::to_string(high_extreme_) + "])");
-            return EncodeResult::ERROR_VALUE_OUT_OF_RANGE;
+            return EncodeResult::ERR_VALUE_OUT_OF_RANGE;
         }
 
         quantized_points.push_back(qp);

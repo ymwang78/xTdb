@@ -11,31 +11,13 @@
     #include <fcntl.h>
     #include <sys/stat.h>
     #include <direct.h>
-    
-    // Prevent Windows.h macros from interfering with C++ std library
-    #ifdef max
-    #undef max
-    #endif
-    #ifdef min
-    #undef min
-    #endif
-    
-    // Windows-specific defines
-    #define unlink _unlink
-    #define stat _stat
-    #define fstat _fstat
-    #define open _open
-    #define close _close
-    #define read _read
-    #define write _write
-    #define lseek _lseek
-    
+        
     // Windows doesn't have pread/pwrite, need to use alternative
     #define pread(fd, buf, count, offset) \
-        (lseek(fd, offset, SEEK_SET) == -1 ? -1 : read(fd, buf, count))
+        (_lseek(fd, offset, SEEK_SET) == -1 ? -1 : _read(fd, buf, count))
     
     #define pwrite(fd, buf, count, offset) \
-        (lseek(fd, offset, SEEK_SET) == -1 ? -1 : write(fd, buf, count))
+        (_lseek(fd, offset, SEEK_SET) == -1 ? -1 : _write(fd, buf, count))
     
     // posix_memalign alternative for Windows
     #include <malloc.h>

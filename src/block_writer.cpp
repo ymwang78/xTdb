@@ -133,7 +133,7 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
     // Validate data_block_index
     if (data_block_index >= layout_.data_blocks) {
         setError("Data block index out of range");
-        return BlockWriteResult::ERROR_INVALID_BLOCK_INDEX;
+        return BlockWriteResult::ERR_INVALID_BLOCK_INDEX;
     }
 
     // Calculate actual block_index (meta_blocks + data_block_index)
@@ -162,7 +162,7 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
 
         if (encode_result != SwingingDoorEncoder::EncodeResult::SUCCESS) {
             setError("Swinging Door encoding failed: " + encoder.getLastError());
-            return BlockWriteResult::ERROR_IO_FAILED;
+            return BlockWriteResult::ERR_IO_FAILED;
         }
 
         // Serialize compressed points
@@ -195,7 +195,7 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
 
         if (encode_result != Quantized16Encoder::EncodeResult::SUCCESS) {
             setError("16-bit Quantization encoding failed: " + encoder.getLastError());
-            return BlockWriteResult::ERROR_IO_FAILED;
+            return BlockWriteResult::ERR_IO_FAILED;
         }
 
         // Serialize quantized points
@@ -225,7 +225,7 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
     // Check if data fits in block
     if (data_size > layout_.block_size_bytes) {
         setError("Buffer too large for block");
-        return BlockWriteResult::ERROR_BUFFER_TOO_LARGE;
+        return BlockWriteResult::ERR_BUFFER_TOO_LARGE;
     }
 
     // Calculate CRC32 of the entire block if requested
@@ -239,7 +239,7 @@ BlockWriteResult BlockWriter::writeBlock(uint64_t chunk_offset,
                                     block_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write block: " + io_->getLastError());
-        return BlockWriteResult::ERROR_IO_FAILED;
+        return BlockWriteResult::ERR_IO_FAILED;
     }
 
     // Update statistics

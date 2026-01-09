@@ -22,7 +22,7 @@ WALReader::~WALReader() {
 WALResult WALReader::readNext(WALEntry& entry) {
     // Check if we've reached the end
     if (current_offset_ >= wal_start_offset_ + wal_size_bytes_) {
-        return WALResult::ERROR_INVALID_ENTRY;  // EOF
+        return WALResult::ERR_INVALID_ENTRY;  // EOF
     }
 
     // Check if we need to load more data
@@ -35,7 +35,7 @@ WALResult WALReader::readNext(WALEntry& entry) {
         // Check again after loading
         if (buffer_position_ + sizeof(WALEntry) > buffer_size_) {
             // Not enough data for a complete entry
-            return WALResult::ERROR_INVALID_ENTRY;
+            return WALResult::ERR_INVALID_ENTRY;
         }
     }
 
@@ -46,7 +46,7 @@ WALResult WALReader::readNext(WALEntry& entry) {
     if (!isValidEntry(entry)) {
         stats_.corrupted_entries++;
         setError("Corrupted WAL entry detected");
-        return WALResult::ERROR_INVALID_ENTRY;
+        return WALResult::ERR_INVALID_ENTRY;
     }
 
     // Update positions
@@ -73,7 +73,7 @@ WALResult WALReader::loadBuffer() {
     // Calculate how much to read
     uint64_t remaining = (wal_start_offset_ + wal_size_bytes_) - current_offset_;
     if (remaining == 0) {
-        return WALResult::ERROR_INVALID_ENTRY;  // EOF
+        return WALResult::ERR_INVALID_ENTRY;  // EOF
     }
 
     // Align to extent boundary for read
@@ -84,7 +84,7 @@ WALResult WALReader::loadBuffer() {
     IOResult io_result = io_->read(buffer_.data(), kExtentSizeBytes, read_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read WAL from disk");
-        return WALResult::ERROR_IO_FAILED;
+        return WALResult::ERR_IO_FAILED;
     }
 
     // Update buffer state

@@ -45,22 +45,22 @@ const char* xtdb_version(void) {
 const char* xtdb_error_string(xtdb_error_t error) {
     switch (error) {
         case XTDB_SUCCESS: return "Success";
-        case XTDB_ERROR_INVALID_PATH: return "Invalid path";
-        case XTDB_ERROR_CONTAINER_OPEN_FAILED: return "Container open failed";
-        case XTDB_ERROR_CONTAINER_HEADER_INVALID: return "Container header invalid";
-        case XTDB_ERROR_METADATA_OPEN_FAILED: return "Metadata open failed";
-        case XTDB_ERROR_WAL_OPEN_FAILED: return "WAL open failed";
-        case XTDB_ERROR_CHUNK_ALLOCATION_FAILED: return "Chunk allocation failed";
-        case XTDB_ERROR_STATE_RESTORATION_FAILED: return "State restoration failed";
-        case XTDB_ERROR_WAL_REPLAY_FAILED: return "WAL replay failed";
-        case XTDB_ERROR_ENGINE_NOT_OPEN: return "Engine not open";
-        case XTDB_ERROR_INVALID_DATA: return "Invalid data";
-        case XTDB_ERROR_INVALID_HANDLE: return "Invalid handle";
-        case XTDB_ERROR_OUT_OF_MEMORY: return "Out of memory";
-        case XTDB_ERROR_INVALID_PARAMETER: return "Invalid parameter";
-        case XTDB_ERROR_QUERY_FAILED: return "Query failed";
-        case XTDB_ERROR_WRITE_FAILED: return "Write failed";
-        case XTDB_ERROR_FLUSH_FAILED: return "Flush failed";
+        case XTDB_ERR_INVALID_PATH: return "Invalid path";
+        case XTDB_ERR_CONTAINER_OPEN_FAILED: return "Container open failed";
+        case XTDB_ERR_CONTAINER_HEADER_INVALID: return "Container header invalid";
+        case XTDB_ERR_METADATA_OPEN_FAILED: return "Metadata open failed";
+        case XTDB_ERR_WAL_OPEN_FAILED: return "WAL open failed";
+        case XTDB_ERR_CHUNK_ALLOCATION_FAILED: return "Chunk allocation failed";
+        case XTDB_ERR_STATE_RESTORATION_FAILED: return "State restoration failed";
+        case XTDB_ERR_WAL_REPLAY_FAILED: return "WAL replay failed";
+        case XTDB_ERR_ENGINE_NOT_OPEN: return "Engine not open";
+        case XTDB_ERR_INVALID_DATA: return "Invalid data";
+        case XTDB_ERR_INVALID_HANDLE: return "Invalid handle";
+        case XTDB_ERR_OUT_OF_MEMORY: return "Out of memory";
+        case XTDB_ERR_INVALID_PARAMETER: return "Invalid parameter";
+        case XTDB_ERR_QUERY_FAILED: return "Query failed";
+        case XTDB_ERR_WRITE_FAILED: return "Write failed";
+        case XTDB_ERR_FLUSH_FAILED: return "Flush failed";
         default: return "Unknown error";
     }
 }
@@ -70,28 +70,28 @@ static xtdb_error_t convertEngineResult(xtdb::EngineResult result) {
     switch (result) {
         case xtdb::EngineResult::SUCCESS:
             return XTDB_SUCCESS;
-        case xtdb::EngineResult::ERROR_INVALID_PATH:
-            return XTDB_ERROR_INVALID_PATH;
-        case xtdb::EngineResult::ERROR_CONTAINER_OPEN_FAILED:
-            return XTDB_ERROR_CONTAINER_OPEN_FAILED;
-        case xtdb::EngineResult::ERROR_CONTAINER_HEADER_INVALID:
-            return XTDB_ERROR_CONTAINER_HEADER_INVALID;
-        case xtdb::EngineResult::ERROR_METADATA_OPEN_FAILED:
-            return XTDB_ERROR_METADATA_OPEN_FAILED;
-        case xtdb::EngineResult::ERROR_WAL_OPEN_FAILED:
-            return XTDB_ERROR_WAL_OPEN_FAILED;
-        case xtdb::EngineResult::ERROR_CHUNK_ALLOCATION_FAILED:
-            return XTDB_ERROR_CHUNK_ALLOCATION_FAILED;
-        case xtdb::EngineResult::ERROR_STATE_RESTORATION_FAILED:
-            return XTDB_ERROR_STATE_RESTORATION_FAILED;
-        case xtdb::EngineResult::ERROR_WAL_REPLAY_FAILED:
-            return XTDB_ERROR_WAL_REPLAY_FAILED;
-        case xtdb::EngineResult::ERROR_ENGINE_NOT_OPEN:
-            return XTDB_ERROR_ENGINE_NOT_OPEN;
-        case xtdb::EngineResult::ERROR_INVALID_DATA:
-            return XTDB_ERROR_INVALID_DATA;
+        case xtdb::EngineResult::ERR_INVALID_PATH:
+            return XTDB_ERR_INVALID_PATH;
+        case xtdb::EngineResult::ERR_CONTAINER_OPEN_FAILED:
+            return XTDB_ERR_CONTAINER_OPEN_FAILED;
+        case xtdb::EngineResult::ERR_CONTAINER_HEADER_INVALID:
+            return XTDB_ERR_CONTAINER_HEADER_INVALID;
+        case xtdb::EngineResult::ERR_METADATA_OPEN_FAILED:
+            return XTDB_ERR_METADATA_OPEN_FAILED;
+        case xtdb::EngineResult::ERR_WAL_OPEN_FAILED:
+            return XTDB_ERR_WAL_OPEN_FAILED;
+        case xtdb::EngineResult::ERR_CHUNK_ALLOCATION_FAILED:
+            return XTDB_ERR_CHUNK_ALLOCATION_FAILED;
+        case xtdb::EngineResult::ERR_STATE_RESTORATION_FAILED:
+            return XTDB_ERR_STATE_RESTORATION_FAILED;
+        case xtdb::EngineResult::ERR_WAL_REPLAY_FAILED:
+            return XTDB_ERR_WAL_REPLAY_FAILED;
+        case xtdb::EngineResult::ERR_ENGINE_NOT_OPEN:
+            return XTDB_ERR_ENGINE_NOT_OPEN;
+        case xtdb::EngineResult::ERR_INVALID_DATA:
+            return XTDB_ERR_INVALID_DATA;
         default:
-            return XTDB_ERROR_INVALID_DATA;
+            return XTDB_ERR_INVALID_DATA;
     }
 }
 
@@ -180,7 +180,7 @@ void xtdb_tag_config_init(xtdb_tag_config_t* config, uint32_t tag_id) {
 
 xtdb_error_t xtdb_open(const xtdb_config_t* config, xtdb_handle_t* handle) {
     if (!handle) {
-        return XTDB_ERROR_INVALID_PARAMETER;
+        return XTDB_ERR_INVALID_PARAMETER;
     }
 
     try {
@@ -217,9 +217,9 @@ xtdb_error_t xtdb_open(const xtdb_config_t* config, xtdb_handle_t* handle) {
         return XTDB_SUCCESS;
 
     } catch (const std::bad_alloc&) {
-        return XTDB_ERROR_OUT_OF_MEMORY;
+        return XTDB_ERR_OUT_OF_MEMORY;
     } catch (...) {
-        return XTDB_ERROR_INVALID_DATA;
+        return XTDB_ERR_INVALID_DATA;
     }
 }
 
@@ -263,14 +263,14 @@ const char* xtdb_get_last_error(xtdb_handle_t handle) {
 // ============================================================================
 
 xtdb_error_t xtdb_write_point(xtdb_handle_t handle, const xtdb_point_t* point) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!point) return XTDB_ERROR_INVALID_PARAMETER;
-    if (!point->tag_config) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!point) return XTDB_ERR_INVALID_PARAMETER;
+    if (!point->tag_config) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         // Convert C API tag config to C++ Core TagConfig
@@ -293,20 +293,20 @@ xtdb_error_t xtdb_write_point(xtdb_handle_t handle, const xtdb_point_t* point) {
 
     } catch (...) {
         impl->last_error = "Exception during write";
-        return XTDB_ERROR_WRITE_FAILED;
+        return XTDB_ERR_WRITE_FAILED;
     }
 }
 
 xtdb_error_t xtdb_write_points(xtdb_handle_t handle,
                                const xtdb_point_t* points,
                                size_t count) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!points || count == 0) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!points || count == 0) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         // Write points one by one
@@ -314,7 +314,7 @@ xtdb_error_t xtdb_write_points(xtdb_handle_t handle,
         for (size_t i = 0; i < count; ++i) {
             if (!points[i].tag_config) {
                 impl->last_error = "Tag configuration is null for point " + std::to_string(i);
-                return XTDB_ERROR_INVALID_PARAMETER;
+                return XTDB_ERR_INVALID_PARAMETER;
             }
 
             // Convert C API tag config to C++ Core TagConfig
@@ -338,17 +338,17 @@ xtdb_error_t xtdb_write_points(xtdb_handle_t handle,
 
     } catch (...) {
         impl->last_error = "Exception during batch write";
-        return XTDB_ERROR_WRITE_FAILED;
+        return XTDB_ERR_WRITE_FAILED;
     }
 }
 
 xtdb_error_t xtdb_flush(xtdb_handle_t handle) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         xtdb::EngineResult result = impl->engine->flush();
@@ -362,7 +362,7 @@ xtdb_error_t xtdb_flush(xtdb_handle_t handle) {
 
     } catch (...) {
         impl->last_error = "Exception during flush";
-        return XTDB_ERROR_FLUSH_FAILED;
+        return XTDB_ERR_FLUSH_FAILED;
     }
 }
 
@@ -375,13 +375,13 @@ xtdb_error_t xtdb_query_points(xtdb_handle_t handle,
                                int64_t start_ts_us,
                                int64_t end_ts_us,
                                xtdb_result_set_t* result_set) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!result_set) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!result_set) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         // Create result set
@@ -405,10 +405,10 @@ xtdb_error_t xtdb_query_points(xtdb_handle_t handle,
         return XTDB_SUCCESS;
 
     } catch (const std::bad_alloc&) {
-        return XTDB_ERROR_OUT_OF_MEMORY;
+        return XTDB_ERR_OUT_OF_MEMORY;
     } catch (...) {
         impl->last_error = "Exception during query";
-        return XTDB_ERROR_QUERY_FAILED;
+        return XTDB_ERR_QUERY_FAILED;
     }
 }
 
@@ -422,13 +422,13 @@ size_t xtdb_result_count(xtdb_result_set_t result_set) {
 xtdb_error_t xtdb_result_get(xtdb_result_set_t result_set,
                              size_t index,
                              xtdb_point_t* point) {
-    if (!result_set) return XTDB_ERROR_INVALID_HANDLE;
-    if (!point) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!result_set) return XTDB_ERR_INVALID_HANDLE;
+    if (!point) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_result_set_impl* rs = static_cast<xtdb_result_set_impl*>(result_set);
 
     if (index >= rs->points.size()) {
-        return XTDB_ERROR_INVALID_PARAMETER;
+        return XTDB_ERR_INVALID_PARAMETER;
     }
 
     const auto& qp = rs->points[index];
@@ -452,12 +452,12 @@ void xtdb_result_free(xtdb_result_set_t result_set) {
 // ============================================================================
 
 xtdb_error_t xtdb_run_retention(xtdb_handle_t handle, int64_t current_time_us) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         xtdb::EngineResult result = impl->engine->runRetentionService(current_time_us);
@@ -471,17 +471,17 @@ xtdb_error_t xtdb_run_retention(xtdb_handle_t handle, int64_t current_time_us) {
 
     } catch (...) {
         impl->last_error = "Exception during retention";
-        return XTDB_ERROR_INVALID_DATA;
+        return XTDB_ERR_INVALID_DATA;
     }
 }
 
 xtdb_error_t xtdb_reclaim_space(xtdb_handle_t handle) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         xtdb::EngineResult result = impl->engine->reclaimDeprecatedChunks();
@@ -495,17 +495,17 @@ xtdb_error_t xtdb_reclaim_space(xtdb_handle_t handle) {
 
     } catch (...) {
         impl->last_error = "Exception during space reclamation";
-        return XTDB_ERROR_INVALID_DATA;
+        return XTDB_ERR_INVALID_DATA;
     }
 }
 
 xtdb_error_t xtdb_seal_chunk(xtdb_handle_t handle) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     try {
         xtdb::EngineResult result = impl->engine->sealCurrentChunk();
@@ -519,7 +519,7 @@ xtdb_error_t xtdb_seal_chunk(xtdb_handle_t handle) {
 
     } catch (...) {
         impl->last_error = "Exception during chunk seal";
-        return XTDB_ERROR_INVALID_DATA;
+        return XTDB_ERR_INVALID_DATA;
     }
 }
 
@@ -528,13 +528,13 @@ xtdb_error_t xtdb_seal_chunk(xtdb_handle_t handle) {
 // ============================================================================
 
 xtdb_error_t xtdb_get_write_stats(xtdb_handle_t handle, xtdb_write_stats_t* stats) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!stats) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!stats) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     const auto& ws = impl->engine->getWriteStats();
     stats->points_written = ws.points_written;
@@ -546,13 +546,13 @@ xtdb_error_t xtdb_get_write_stats(xtdb_handle_t handle, xtdb_write_stats_t* stat
 }
 
 xtdb_error_t xtdb_get_read_stats(xtdb_handle_t handle, xtdb_read_stats_t* stats) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!stats) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!stats) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     const auto& rs = impl->engine->getReadStats();
     stats->queries_executed = rs.queries_executed;
@@ -565,13 +565,13 @@ xtdb_error_t xtdb_get_read_stats(xtdb_handle_t handle, xtdb_read_stats_t* stats)
 
 xtdb_error_t xtdb_get_maintenance_stats(xtdb_handle_t handle,
                                         xtdb_maintenance_stats_t* stats) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!stats) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!stats) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     const auto& ms = impl->engine->getMaintenanceStats();
     stats->chunks_deprecated = ms.chunks_deprecated;
@@ -599,17 +599,17 @@ size_t xtdb_get_container_count(xtdb_handle_t handle) {
 xtdb_error_t xtdb_get_container_info(xtdb_handle_t handle,
                                      size_t index,
                                      xtdb_container_info_t* info) {
-    if (!handle) return XTDB_ERROR_INVALID_HANDLE;
-    if (!info) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!handle) return XTDB_ERR_INVALID_HANDLE;
+    if (!info) return XTDB_ERR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
 
-    if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
+    if (!impl->engine) return XTDB_ERR_INVALID_HANDLE;
 
     const auto& containers = impl->engine->getContainers();
     if (index >= containers.size()) {
-        return XTDB_ERROR_INVALID_PARAMETER;
+        return XTDB_ERR_INVALID_PARAMETER;
     }
 
     const auto& c = containers[index];

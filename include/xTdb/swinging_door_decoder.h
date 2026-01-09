@@ -1,4 +1,4 @@
-#ifndef XTDB_SWINGING_DOOR_DECODER_H_
+﻿#ifndef XTDB_SWINGING_DOOR_DECODER_H_
 #define XTDB_SWINGING_DOOR_DECODER_H_
 
 #include "xTdb/swinging_door_encoder.h"
@@ -10,13 +10,14 @@ namespace xtdb {
 
 /// Swinging Door 压缩算法解码器
 /// 通过线性插值从关键端点恢复原始时间点的值
+
 class SwingingDoorDecoder {
 public:
     /// 解码结果
     enum class DecodeResult {
         SUCCESS = 0,
-        ERROR_INVALID_DATA,
-        ERROR_TIME_OUT_OF_RANGE
+        ERR_INVALID_DATA,
+        ERR_TIME_OUT_OF_RANGE
     };
 
     /// 解码后的数据点

@@ -1,4 +1,4 @@
-#include "xTdb/swinging_door_encoder.h"
+﻿#include "xTdb/swinging_door_encoder.h"
 #include <cmath>
 #include <limits>
 
@@ -30,12 +30,12 @@ SwingingDoorEncoder::EncodeResult SwingingDoorEncoder::encode(
     // 验证参数
     if (tolerance_ < 0.0) {
         setError("Tolerance must be non-negative");
-        return EncodeResult::ERROR_INVALID_TOLERANCE;
+        return EncodeResult::ERR_INVALID_TOLERANCE;
     }
 
     if (compression_factor_ <= 0.0) {
         setError("Compression factor must be positive");
-        return EncodeResult::ERROR_INVALID_TOLERANCE;
+        return EncodeResult::ERR_INVALID_TOLERANCE;
     }
 
     original_count_ = records.size();

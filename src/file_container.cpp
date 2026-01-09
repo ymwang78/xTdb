@@ -1,7 +1,9 @@
-#include "xTdb/file_container.h"
+﻿#include "xTdb/file_container.h"
 #include "xTdb/platform_compat.h"
 #include <cstring>
+#include <cerrno>
 #include <iostream>
+#include <chrono>
 
 #ifdef __linux__
 #include <linux/fs.h>
@@ -30,7 +32,7 @@ ContainerResult FileContainer::open(bool create_if_not_exists) {
 
     if (is_open_) {
         setError("Container already open");
-        return ContainerResult::ERROR_ALREADY_OPEN;
+        return ContainerResult::ERR_ALREADY_OPEN;
     }
 
     // Check if file exists
@@ -39,7 +41,7 @@ ContainerResult FileContainer::open(bool create_if_not_exists) {
 
     if (!exists && !create_if_not_exists) {
         setError("Container file does not exist: " + path_);
-        return ContainerResult::ERROR_OPEN_FAILED;
+        return ContainerResult::ERR_OPENFD_FAILED;
     }
 
     // Open file using AlignedIO
@@ -48,7 +50,7 @@ ContainerResult FileContainer::open(bool create_if_not_exists) {
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to open file: " + io_->getLastError());
         io_.reset();
-        return ContainerResult::ERROR_OPEN_FAILED;
+        return ContainerResult::ERR_OPENFD_FAILED;
     }
 
     // If file exists, read and validate header
@@ -99,12 +101,12 @@ ContainerResult FileContainer::write(const void* buffer, uint64_t size, uint64_t
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     if (read_only_) {
         setError("Container is read-only");
-        return ContainerResult::ERROR_WRITE_FAILED;
+        return ContainerResult::ERR_WRITE_FAILED;
     }
 
     IOResult io_result = io_->write(buffer, size, offset);
@@ -125,7 +127,7 @@ ContainerResult FileContainer::read(void* buffer, uint64_t size, uint64_t offset
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     IOResult io_result = io_->read(buffer, size, offset);
@@ -146,13 +148,13 @@ ContainerResult FileContainer::sync() {
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     IOResult io_result = io_->sync();
     if (io_result != IOResult::SUCCESS) {
         setError("Sync failed: " + io_->getLastError());
-        return ContainerResult::ERROR_SYNC_FAILED;
+        return ContainerResult::ERR_SYNC_FAILED;
     }
 
     stats_.sync_operations++;
@@ -174,18 +176,18 @@ ContainerResult FileContainer::preallocate(uint64_t size) {
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     if (read_only_) {
         setError("Container is read-only");
-        return ContainerResult::ERROR_WRITE_FAILED;
+        return ContainerResult::ERR_WRITE_FAILED;
     }
 
     IOResult io_result = io_->preallocate(size);
     if (io_result != IOResult::SUCCESS) {
         setError("Preallocate failed: " + io_->getLastError());
-        return ContainerResult::ERROR_WRITE_FAILED;
+        return ContainerResult::ERR_WRITE_FAILED;
     }
 
     return ContainerResult::SUCCESS;
@@ -226,7 +228,7 @@ ContainerResult FileContainer::initializeNewContainer() {
     IOResult io_result = io_->write(header_buf.data(), kExtentSizeBytes, 0);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write container header: " + io_->getLastError());
-        return ContainerResult::ERROR_CREATE_FAILED;
+        return ContainerResult::ERR_CREATE_FAILED;
     }
 
     // Initialize WAL region (extent 1-256, 4 MB total)
@@ -237,7 +239,7 @@ ContainerResult FileContainer::initializeNewContainer() {
         io_result = io_->write(zero_buf.data(), kExtentSizeBytes, i * kExtentSizeBytes);
         if (io_result != IOResult::SUCCESS) {
             setError("Failed to initialize WAL region: " + io_->getLastError());
-            return ContainerResult::ERROR_CREATE_FAILED;
+            return ContainerResult::ERR_CREATE_FAILED;
         }
     }
 
@@ -295,7 +297,7 @@ ContainerResult FileContainer::readAndValidateHeader() {
     IOResult io_result = io_->read(header_buf.data(), kExtentSizeBytes, 0);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read container header: " + io_->getLastError());
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     // Parse header
@@ -305,13 +307,13 @@ ContainerResult FileContainer::readAndValidateHeader() {
     // Validate magic number
     if (std::memcmp(header.magic, kContainerMagic, 8) != 0) {
         setError("Invalid container magic number");
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     // Validate version
     if (header.version != 0x0102) {
         setError("Unsupported container version");
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     // Store metadata
@@ -336,18 +338,18 @@ ContainerResult FileContainer::convertIOResult(IOResult io_result) {
     switch (io_result) {
         case IOResult::SUCCESS:
             return ContainerResult::SUCCESS;
-        case IOResult::ERROR_OPEN_FAILED:
-            return ContainerResult::ERROR_OPEN_FAILED;
-        case IOResult::ERROR_ALIGNMENT:
-            return ContainerResult::ERROR_INVALID_OFFSET;
-        case IOResult::ERROR_IO_FAILED:
-            return ContainerResult::ERROR_READ_FAILED;
-        case IOResult::ERROR_INVALID_FD:
-            return ContainerResult::ERROR_NOT_OPEN;
-        case IOResult::ERROR_PREALLOCATE_FAILED:
-            return ContainerResult::ERROR_WRITE_FAILED;
+        case IOResult::ERR_OPENFD_FAILED:
+            return ContainerResult::ERR_OPENFD_FAILED;
+        case IOResult::ERR_ALIGNMENT:
+            return ContainerResult::ERR_INVALID_OFFSET;
+        case IOResult::ERR_IO_FAILED:
+            return ContainerResult::ERR_READ_FAILED;
+        case IOResult::ERR_INVALID_FD:
+            return ContainerResult::ERR_NOT_OPEN;
+        case IOResult::ERR_PREALLOCATE_FAILED:
+            return ContainerResult::ERR_WRITE_FAILED;
         default:
-            return ContainerResult::ERROR_READ_FAILED;
+            return ContainerResult::ERR_READ_FAILED;
     }
 }
 

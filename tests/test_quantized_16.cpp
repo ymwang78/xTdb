@@ -143,7 +143,7 @@ TEST_F(Quantized16Test, OutOfRangeDetection) {
 
     std::vector<Quantized16Encoder::QuantizedPoint> quantized1;
     auto result1 = encoder.encode(0, input1, quantized1);
-    EXPECT_EQ(Quantized16Encoder::EncodeResult::ERROR_VALUE_OUT_OF_RANGE, result1);
+    EXPECT_EQ(Quantized16Encoder::EncodeResult::ERR_VALUE_OUT_OF_RANGE, result1);
     EXPECT_FALSE(encoder.getLastError().empty());
 
     // Test value above range
@@ -156,7 +156,7 @@ TEST_F(Quantized16Test, OutOfRangeDetection) {
 
     std::vector<Quantized16Encoder::QuantizedPoint> quantized2;
     auto result2 = encoder.encode(0, input2, quantized2);
-    EXPECT_EQ(Quantized16Encoder::EncodeResult::ERROR_VALUE_OUT_OF_RANGE, result2);
+    EXPECT_EQ(Quantized16Encoder::EncodeResult::ERR_VALUE_OUT_OF_RANGE, result2);
 }
 
 // Test compression ratio calculation
@@ -251,7 +251,7 @@ TEST_F(Quantized16Test, InvalidRange) {
 
     std::vector<Quantized16Encoder::QuantizedPoint> quantized;
     auto result = encoder.encode(0, input, quantized);
-    EXPECT_EQ(Quantized16Encoder::EncodeResult::ERROR_INVALID_RANGE, result);
+    EXPECT_EQ(Quantized16Encoder::EncodeResult::ERR_INVALID_RANGE, result);
 }
 
 int main(int argc, char** argv) {

@@ -15,8 +15,8 @@ public:
     /// Decode result
     enum class DecodeResult {
         SUCCESS = 0,
-        ERROR_INVALID_RANGE,
-        ERROR_INVALID_DATA
+        ERR_INVALID_RANGE,
+        ERR_INVALID_DATA
     };
 
     /// Constructor

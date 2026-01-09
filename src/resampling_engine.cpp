@@ -62,12 +62,12 @@ ResampleResult ResamplingEngine::resample(int64_t base_ts_us,
     // Validate input
     if (records.empty()) {
         setError("No input records to resample");
-        return ResampleResult::ERROR_EMPTY_INPUT;
+        return ResampleResult::ERR_EMPTY_INPUT;
     }
 
     if (interval_us_ == 0) {
         setError("Invalid resampling interval (must be > 0)");
-        return ResampleResult::ERROR_INVALID_INTERVAL;
+        return ResampleResult::ERR_INVALID_INTERVAL;
     }
 
     input_count_ = records.size();

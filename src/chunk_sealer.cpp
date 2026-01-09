@@ -69,7 +69,7 @@ SealResult ChunkSealer::calculateSuperCRC(uint64_t chunk_offset,
     IOResult result = io_->read(buffer.data(), buffer_size, dir_offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to read directory: " + io_->getLastError());
-        return SealResult::ERROR_IO_FAILED;
+        return SealResult::ERR_IO_FAILED;
     }
 
     // Calculate CRC32 over the directory entries only (not padding)
@@ -87,13 +87,13 @@ SealResult ChunkSealer::sealChunk(uint64_t chunk_offset,
     MutateResult read_result = mutator_->readChunkHeader(chunk_offset, header);
     if (read_result != MutateResult::SUCCESS) {
         setError("Failed to read chunk header: " + mutator_->getLastError());
-        return SealResult::ERROR_IO_FAILED;
+        return SealResult::ERR_IO_FAILED;
     }
 
     // Check if already sealed
     if (chunkIsSealed(header.flags)) {
         setError("Chunk already sealed");
-        return SealResult::ERROR_ALREADY_SEALED;
+        return SealResult::ERR_ALREADY_SEALED;
     }
 
     // Calculate SuperCRC
@@ -110,7 +110,7 @@ SealResult ChunkSealer::sealChunk(uint64_t chunk_offset,
                                                    super_crc32);
     if (seal_result != MutateResult::SUCCESS) {
         setError("Failed to seal chunk: " + mutator_->getLastError());
-        return SealResult::ERROR_IO_FAILED;
+        return SealResult::ERR_IO_FAILED;
     }
 
     return SealResult::SUCCESS;

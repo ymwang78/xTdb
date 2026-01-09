@@ -59,7 +59,7 @@ TEST_F(AlignmentTest, UnalignedBufferFails) {
 
     // Attempt write with unaligned buffer
     IOResult result = io.write(unaligned_ptr, kExtentSizeBytes, 0);
-    EXPECT_EQ(IOResult::ERROR_ALIGNMENT, result)
+    EXPECT_EQ(IOResult::ERR_ALIGNMENT, result)
         << "Write with unaligned buffer should fail";
 
     // Verify no write occurred
@@ -76,7 +76,7 @@ TEST_F(AlignmentTest, UnalignedSizeFails) {
     // Attempt write with unaligned size (not multiple of 16KB)
     uint64_t unaligned_size = kExtentSizeBytes + 1024;  // 16KB + 1KB = not aligned
     IOResult result = io.write(buffer.data(), unaligned_size, 0);
-    EXPECT_EQ(IOResult::ERROR_ALIGNMENT, result)
+    EXPECT_EQ(IOResult::ERR_ALIGNMENT, result)
         << "Write with unaligned size should fail";
 
     // Verify no write occurred
@@ -93,7 +93,7 @@ TEST_F(AlignmentTest, UnalignedOffsetFails) {
     // Attempt write with unaligned offset (not multiple of 16KB)
     uint64_t unaligned_offset = 4096;  // 4KB offset = not 16KB-aligned
     IOResult result = io.write(buffer.data(), kExtentSizeBytes, unaligned_offset);
-    EXPECT_EQ(IOResult::ERROR_ALIGNMENT, result)
+    EXPECT_EQ(IOResult::ERR_ALIGNMENT, result)
         << "Write with unaligned offset should fail";
 
     // Verify no write occurred
@@ -165,7 +165,7 @@ TEST_F(AlignmentTest, UnalignedReadFails) {
     // Attempt read with unaligned offset
     uint64_t unaligned_offset = 8192;  // 8KB = not 16KB-aligned
     IOResult result = io.read(buffer.data(), kExtentSizeBytes, unaligned_offset);
-    EXPECT_EQ(IOResult::ERROR_ALIGNMENT, result)
+    EXPECT_EQ(IOResult::ERR_ALIGNMENT, result)
         << "Read with unaligned offset should fail";
 
     // Note: read stats should still be 0 (failed before operation)
@@ -194,7 +194,7 @@ TEST_F(AlignmentTest, PreallocateUnalignedFails) {
     // Attempt preallocate with unaligned size
     uint64_t unaligned_size = 100 * 1024 * 1024 + 1024;  // 100MB + 1KB
     EXPECT_FALSE(isExtentAligned(unaligned_size));
-    EXPECT_EQ(IOResult::ERROR_ALIGNMENT, io.preallocate(unaligned_size));
+    EXPECT_EQ(IOResult::ERR_ALIGNMENT, io.preallocate(unaligned_size));
 }
 
 // Test 10: AlignedBuffer automatic alignment

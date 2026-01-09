@@ -17,10 +17,10 @@ namespace xtdb {
 /// Directory build result
 enum class DirBuildResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_INVALID_BLOCK,
-    ERROR_BLOCK_SEALED,
-    ERROR_CRC_FAILED
+    ERR_IO_FAILED,
+    ERR_INVALID_BLOCK,
+    ERR_BLOCK_SEALED,
+    ERR_CRC_FAILED
 };
 
 /// Directory builder for managing block metadata

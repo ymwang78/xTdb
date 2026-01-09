@@ -54,7 +54,7 @@ RotatingWAL::~RotatingWAL() {
 RotatingWALResult RotatingWAL::open() {
     if (is_open_) {
         setError("WAL already open");
-        return RotatingWALResult::ERROR_CONTAINER_OPEN_FAILED;
+        return RotatingWALResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Check if container exists
@@ -66,7 +66,7 @@ RotatingWALResult RotatingWAL::open() {
     IOResult io_result = io_->open(config_.wal_container_path, true, config_.direct_io);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to open WAL container: " + io_->getLastError());
-        return RotatingWALResult::ERROR_CONTAINER_OPEN_FAILED;
+        return RotatingWALResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     RotatingWALResult result;
@@ -140,7 +140,7 @@ RotatingWALResult RotatingWAL::initializeContainer() {
     IOResult io_result = io_->write(header_buf.data(), kExtentSizeBytes, 0);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write WAL container header: " + io_->getLastError());
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // Initialize segments
@@ -167,7 +167,7 @@ RotatingWALResult RotatingWAL::initializeContainer() {
         io_result = io_->write(zero_buf.data(), kExtentSizeBytes, offset);
         if (io_result != IOResult::SUCCESS) {
             setError("Failed to initialize segment " + std::to_string(i));
-            return RotatingWALResult::ERROR_IO_FAILED;
+            return RotatingWALResult::ERR_IO_FAILED;
         }
 
         offset += config_.segment_size_bytes;
@@ -183,7 +183,7 @@ RotatingWALResult RotatingWAL::loadContainer() {
     IOResult io_result = io_->read(header_buf.data(), kExtentSizeBytes, 0);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read WAL container header: " + io_->getLastError());
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     WALContainerHeader header;
@@ -192,13 +192,13 @@ RotatingWALResult RotatingWAL::loadContainer() {
     // Verify magic
     if (std::memcmp(header.magic, "XTDB-WAL", 8) != 0) {
         setError("Invalid WAL container magic");
-        return RotatingWALResult::ERROR_CONTAINER_OPEN_FAILED;
+        return RotatingWALResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Verify version
     if (header.version != 1) {
         setError("Unsupported WAL container version: " + std::to_string(header.version));
-        return RotatingWALResult::ERROR_CONTAINER_OPEN_FAILED;
+        return RotatingWALResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Load segments
@@ -235,13 +235,13 @@ RotatingWALResult RotatingWAL::loadContainer() {
 RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
     if (!is_open_) {
         setError("WAL not open");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // Validate entry
     if (entry.tag_id == 0) {
         setError("Invalid entry: tag_id cannot be 0");
-        return RotatingWALResult::ERROR_INVALID_ENTRY;
+        return RotatingWALResult::ERR_INVALID_ENTRY;
     }
 
     // Check if current segment has space
@@ -262,7 +262,7 @@ RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
     WALResult wal_result = current_writer_->append(entry);
     if (wal_result != WALResult::SUCCESS) {
         setError("WAL write failed: " + current_writer_->getLastError());
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // Update segment metadata
@@ -276,7 +276,7 @@ RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
                   << " [" << segment.start_offset << ", "
                   << (segment.start_offset + segment.segment_size) << ")" << std::endl;
         setError("Writer offset out of bounds");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     uint64_t new_write_pos = writer_offset - segment.start_offset;
@@ -301,7 +301,7 @@ RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
 RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries) {
     if (!is_open_) {
         setError("WAL not open");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     if (entries.empty()) {
@@ -314,7 +314,7 @@ RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries)
         // Validate entry
         if (entry.tag_id == 0) {
             setError("Invalid entry: tag_id cannot be 0");
-            return RotatingWALResult::ERROR_INVALID_ENTRY;
+            return RotatingWALResult::ERR_INVALID_ENTRY;
         }
 
         // Check if current segment has space
@@ -334,7 +334,7 @@ RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries)
         WALResult wal_result = current_writer_->append(entry);
         if (wal_result != WALResult::SUCCESS) {
             setError("WAL write failed: " + current_writer_->getLastError());
-            return RotatingWALResult::ERROR_IO_FAILED;
+            return RotatingWALResult::ERR_IO_FAILED;
         }
 
         // Update segment metadata
@@ -348,7 +348,7 @@ RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries)
                       << " [" << segment.start_offset << ", "
                       << (segment.start_offset + segment.segment_size) << ")" << std::endl;
             setError("Writer offset out of bounds");
-            return RotatingWALResult::ERROR_IO_FAILED;
+            return RotatingWALResult::ERR_IO_FAILED;
         }
 
         uint64_t new_write_pos = writer_offset - segment.start_offset;
@@ -374,13 +374,13 @@ RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries)
 RotatingWALResult RotatingWAL::sync() {
     if (!is_open_ || !current_writer_) {
         setError("WAL not open");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     WALResult result = current_writer_->sync();
     if (result != WALResult::SUCCESS) {
         setError("WAL sync failed: " + current_writer_->getLastError());
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     stats_.sync_operations++;
@@ -390,7 +390,7 @@ RotatingWALResult RotatingWAL::sync() {
 RotatingWALResult RotatingWAL::rotateSegment() {
     if (!is_open_) {
         setError("WAL not open");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // Sync current writer
@@ -415,12 +415,12 @@ RotatingWALResult RotatingWAL::rotateSegment() {
             RotatingWALResult result = growContainer();
             if (result != RotatingWALResult::SUCCESS) {
                 setError("All segments full and cannot grow");
-                return RotatingWALResult::ERROR_ALL_SEGMENTS_FULL;
+                return RotatingWALResult::ERR_ALL_SEGMENTS_FULL;
             }
             next_segment_id = static_cast<uint32_t>(segments_.size() - 1);
         } else {
             setError("Next segment not cleared, cannot rotate");
-            return RotatingWALResult::ERROR_SEGMENT_NOT_CLEARED;
+            return RotatingWALResult::ERR_SEGMENT_NOT_CLEARED;
         }
     }
 
@@ -438,7 +438,7 @@ RotatingWALResult RotatingWAL::rotateSegment() {
         bool flush_success = flush_callback_(old_segment_id, old_segment_tags);
         if (!flush_success) {
             setError("Flush callback failed for segment " + std::to_string(old_segment_id));
-            return RotatingWALResult::ERROR_CALLBACK_FAILED;
+            return RotatingWALResult::ERR_CALLBACK_FAILED;
         }
         stats_.segment_flushes++;
     }
@@ -467,13 +467,13 @@ RotatingWALResult RotatingWAL::rotateSegment() {
 RotatingWALResult RotatingWAL::clearSegment(uint32_t segment_id) {
     if (segment_id >= segments_.size()) {
         setError("Invalid segment ID: " + std::to_string(segment_id));
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // Don't clear current active segment
     if (segment_id == current_segment_id_) {
         setError("Cannot clear current active segment");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     WALSegment& segment = segments_[segment_id];
@@ -490,7 +490,7 @@ RotatingWALResult RotatingWAL::clearSegment(uint32_t segment_id) {
     IOResult result = io_->write(zero_buf.data(), kExtentSizeBytes, segment.start_offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to clear segment " + std::to_string(segment_id));
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // IMPORTANT: Reset segment metadata
@@ -518,12 +518,12 @@ RotatingWALResult RotatingWAL::clearSegment(uint32_t segment_id) {
 RotatingWALResult RotatingWAL::growContainer() {
     if (!config_.auto_grow) {
         setError("Auto-grow not enabled");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     if (segments_.size() >= config_.max_segments) {
         setError("Maximum segments reached");
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     // Create new segment
@@ -543,7 +543,7 @@ RotatingWALResult RotatingWAL::growContainer() {
     IOResult result = io_->write(zero_buf.data(), kExtentSizeBytes, offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to grow container: " + io_->getLastError());
-        return RotatingWALResult::ERROR_IO_FAILED;
+        return RotatingWALResult::ERR_IO_FAILED;
     }
 
     segments_.push_back(new_segment);

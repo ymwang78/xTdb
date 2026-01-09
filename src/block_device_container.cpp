@@ -37,7 +37,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
 
     if (is_open_) {
         setError("Container already open");
-        return ContainerResult::ERROR_ALREADY_OPEN;
+        return ContainerResult::ERR_ALREADY_OPEN;
     }
 
     // On Windows, allow using regular files to simulate block devices
@@ -50,7 +50,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
     bool is_block_dev = isBlockDevice(device_path_);
     if (!is_block_dev && !test_mode_) {
         setError("Not a block device: " + device_path_);
-        return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+        return ContainerResult::ERR_DEVICE_NOT_FOUND;
     }
     bool effective_test_mode = test_mode_;
 #endif
@@ -74,9 +74,9 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
     if (fd_ < 0) {
         setError("Failed to open block device: " + device_path_ + " (errno=" + std::to_string(errno) + ")");
         if (errno == EACCES || errno == EPERM) {
-            return ContainerResult::ERROR_INSUFFICIENT_PERMISSIONS;
+            return ContainerResult::ERR_INSUFFICIENT_PERMISSIONS;
         }
-        return ContainerResult::ERROR_OPEN_FAILED;
+        return ContainerResult::ERR_OPENFD_FAILED;
     }
 
     // Detect device properties
@@ -94,7 +94,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         setError("Failed to seek device header: " + std::string(strerror(errno)));
         ::_close(fd_);
         fd_ = -1;
-        return ContainerResult::ERROR_READ_FAILED;
+        return ContainerResult::ERR_READ_FAILED;
     }
     ssize_t bytes_read = ::_read(fd_, header_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
 #else
@@ -104,7 +104,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         setError("Failed to read device header: " + std::string(strerror(errno)));
         ::_close(fd_);
         fd_ = -1;
-        return ContainerResult::ERROR_READ_FAILED;
+        return ContainerResult::ERR_READ_FAILED;
     }
 
     // Check if header is valid
@@ -134,7 +134,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
             setError("Device has no valid container header");
             ::_close(fd_);
             fd_ = -1;
-            return ContainerResult::ERROR_INVALID_HEADER;
+            return ContainerResult::ERR_INVALID_HEADER;
         }
     }
 
@@ -153,7 +153,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         ::_close(fd_);
         fd_ = -1;
         io_.reset();
-        return ContainerResult::ERROR_OPEN_FAILED;
+            return ContainerResult::ERR_OPENFD_FAILED;
     }
 
     is_open_ = true;
@@ -196,41 +196,41 @@ ContainerResult BlockDeviceContainer::write(const void* buffer, uint64_t size, u
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     if (read_only_) {
         setError("Container is read-only");
-        return ContainerResult::ERROR_WRITE_FAILED;
+        return ContainerResult::ERR_WRITE_FAILED;
     }
 
     // Validate alignment (16KB for xTdb)
     if ((reinterpret_cast<uintptr_t>(buffer) % kExtentSizeBytes) != 0) {
         setError("Buffer not 16KB-aligned");
-        return ContainerResult::ERROR_INVALID_OFFSET;
+        return ContainerResult::ERR_INVALID_OFFSET;
     }
 
     if ((size % kExtentSizeBytes) != 0) {
         setError("Size not extent-aligned");
-        return ContainerResult::ERROR_INVALID_SIZE;
+        return ContainerResult::ERR_INVALID_SIZE;
     }
 
     if ((offset % kExtentSizeBytes) != 0) {
         setError("Offset not extent-aligned");
-        return ContainerResult::ERROR_INVALID_OFFSET;
+        return ContainerResult::ERR_INVALID_OFFSET;
     }
 
     // Check bounds
     if (offset + size > device_capacity_) {
         setError("Write exceeds device capacity");
-        return ContainerResult::ERROR_INVALID_OFFSET;
+        return ContainerResult::ERR_INVALID_OFFSET;
     }
 
     // Perform write
 #ifdef _WIN32
-    if (::_lseek(fd_, offset, SEEK_SET) == -1) {
+    if (::_lseeki64(fd_, offset, SEEK_SET) == -1) {
         setError("Failed to seek: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_WRITE_FAILED;
+        return ContainerResult::ERR_WRITE_FAILED;
     }
     ssize_t bytes_written = ::_write(fd_, buffer, static_cast<unsigned int>(size));
 #else
@@ -238,7 +238,7 @@ ContainerResult BlockDeviceContainer::write(const void* buffer, uint64_t size, u
 #endif
     if (bytes_written < 0 || static_cast<uint64_t>(bytes_written) != size) {
         setError("Write failed: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_WRITE_FAILED;
+        return ContainerResult::ERR_WRITE_FAILED;
     }
 
     // Update statistics
@@ -253,36 +253,36 @@ ContainerResult BlockDeviceContainer::read(void* buffer, uint64_t size, uint64_t
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     // Validate alignment (16KB for xTdb)
     if ((reinterpret_cast<uintptr_t>(buffer) % kExtentSizeBytes) != 0) {
         setError("Buffer not 16KB-aligned");
-        return ContainerResult::ERROR_INVALID_OFFSET;
+        return ContainerResult::ERR_INVALID_OFFSET;
     }
 
     if ((size % kExtentSizeBytes) != 0) {
         setError("Size not extent-aligned");
-        return ContainerResult::ERROR_INVALID_SIZE;
+        return ContainerResult::ERR_INVALID_SIZE;
     }
 
     if ((offset % kExtentSizeBytes) != 0) {
         setError("Offset not extent-aligned");
-        return ContainerResult::ERROR_INVALID_OFFSET;
+        return ContainerResult::ERR_INVALID_OFFSET;
     }
 
     // Check bounds
     if (offset + size > device_capacity_) {
         setError("Read exceeds device capacity");
-        return ContainerResult::ERROR_INVALID_OFFSET;
+        return ContainerResult::ERR_INVALID_OFFSET;
     }
 
     // Perform read
 #ifdef _WIN32
-    if (::_lseek(fd_, offset, SEEK_SET) == -1) {
+    if (::_lseeki64(fd_, offset, SEEK_SET) == -1) {
         setError("Failed to seek: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_READ_FAILED;
+        return ContainerResult::ERR_READ_FAILED;
     }
     ssize_t bytes_read = ::_read(fd_, buffer, static_cast<unsigned int>(size));
 #else
@@ -290,7 +290,7 @@ ContainerResult BlockDeviceContainer::read(void* buffer, uint64_t size, uint64_t
 #endif
     if (bytes_read < 0 || static_cast<uint64_t>(bytes_read) != size) {
         setError("Read failed: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_READ_FAILED;
+        return ContainerResult::ERR_READ_FAILED;
     }
 
     // Update statistics
@@ -305,12 +305,12 @@ ContainerResult BlockDeviceContainer::sync() {
 
     if (!is_open_) {
         setError("Container not open");
-        return ContainerResult::ERROR_NOT_OPEN;
+        return ContainerResult::ERR_NOT_OPEN;
     }
 
     if (::fsync(fd_) < 0) {
         setError("Sync failed: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_SYNC_FAILED;
+        return ContainerResult::ERR_SYNC_FAILED;
     }
 
     stats_.sync_operations++;
@@ -352,7 +352,7 @@ ContainerResult BlockDeviceContainer::detectDeviceProperties() {
         struct stat st;
         if (fstat(fd_, &st) < 0) {
             setError("Failed to get file size: " + std::string(strerror(errno)));
-            return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+            return ContainerResult::ERR_DEVICE_NOT_FOUND;
         }
         size_bytes = st.st_size;
         device_block_size_ = 4096;  // Use default 4KB for regular files
@@ -362,7 +362,7 @@ ContainerResult BlockDeviceContainer::detectDeviceProperties() {
         // Production mode: Get device size using BLKGETSIZE64
         if (ioctl(fd_, BLKGETSIZE64, &size_bytes) < 0) {
             setError("Failed to get device size: " + std::string(strerror(errno)));
-            return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+            return ContainerResult::ERR_DEVICE_NOT_FOUND;
         }
 
         // Get device block size
@@ -383,13 +383,13 @@ ContainerResult BlockDeviceContainer::detectDeviceProperties() {
     if (device_capacity_ < min_capacity) {
         setError("Device capacity too small: " + std::to_string(device_capacity_) +
                  " bytes (minimum: " + std::to_string(min_capacity) + " bytes)");
-        return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+        return ContainerResult::ERR_DEVICE_NOT_FOUND;
     }
 
     return ContainerResult::SUCCESS;
 #else
     setError("Block device support is only available on Linux");
-    return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+    return ContainerResult::ERR_DEVICE_NOT_FOUND;
 #endif
 }
 
@@ -430,7 +430,7 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
 #ifdef _WIN32
     if (::_lseek(fd_, 0, SEEK_SET) == -1) {
         setError("Failed to seek: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_CREATE_FAILED;
+        return ContainerResult::ERR_CREATE_FAILED;
     }
     ssize_t bytes_written = ::_write(fd_, header_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
 #else
@@ -438,7 +438,7 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
 #endif
     if (bytes_written < 0 || bytes_written != kExtentSizeBytes) {
         setError("Failed to write container header: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_CREATE_FAILED;
+        return ContainerResult::ERR_CREATE_FAILED;
     }
 
     // Initialize WAL region (extent 1-256, 4 MB total)
@@ -448,7 +448,7 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
 #ifdef _WIN32
         if (::_lseek(fd_, i * kExtentSizeBytes, SEEK_SET) == -1) {
             setError("Failed to seek: " + std::string(strerror(errno)));
-            return ContainerResult::ERROR_CREATE_FAILED;
+            return ContainerResult::ERR_CREATE_FAILED;
         }
         bytes_written = ::_write(fd_, zero_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
 #else
@@ -456,7 +456,7 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
 #endif
         if (bytes_written < 0 || bytes_written != kExtentSizeBytes) {
             setError("Failed to initialize WAL region: " + std::string(strerror(errno)));
-            return ContainerResult::ERROR_CREATE_FAILED;
+            return ContainerResult::ERR_CREATE_FAILED;
         }
     }
 
@@ -487,7 +487,7 @@ ContainerResult BlockDeviceContainer::readAndValidateHeader() {
 #ifdef _WIN32
     if (::_lseek(fd_, 0, SEEK_SET) == -1) {
         setError("Failed to seek: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
     ssize_t bytes_read = ::_read(fd_, header_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
 #else
@@ -495,7 +495,7 @@ ContainerResult BlockDeviceContainer::readAndValidateHeader() {
 #endif
     if (bytes_read < 0 || bytes_read != kExtentSizeBytes) {
         setError("Failed to read container header: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     // Parse header
@@ -505,13 +505,13 @@ ContainerResult BlockDeviceContainer::readAndValidateHeader() {
     // Validate magic number
     if (std::memcmp(header.magic, kContainerMagic, 8) != 0) {
         setError("Invalid container magic number");
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     // Validate version
     if (header.version != 0x0102) {
         setError("Unsupported container version");
-        return ContainerResult::ERROR_INVALID_HEADER;
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     // Store metadata

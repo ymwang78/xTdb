@@ -13,8 +13,8 @@ namespace xtdb {
 constexpr uint32_t kExtentSizeBytes = 16384u;  // 16KB
 
 /// Helper: Convert extent count to bytes
-constexpr uint64_t extentToBytes(uint32_t extent_count) {
-    return static_cast<uint64_t>(extent_count) * kExtentSizeBytes;
+constexpr uint32_t extentToBytes(uint32_t extent_count) {
+    return static_cast<uint32_t>(extent_count) * kExtentSizeBytes;
 }
 
 /// Helper: Convert bytes to extent count (must be aligned)
@@ -43,7 +43,7 @@ enum class RawBlockClass : uint8_t {
 };
 
 /// Get block size in bytes for a given block class
-constexpr uint64_t getBlockSizeBytes(RawBlockClass block_class) {
+constexpr uint32_t getBlockSizeBytes(RawBlockClass block_class) {
     switch (block_class) {
         case RawBlockClass::RAW_16K:  return 16384u;      // 16KB
         case RawBlockClass::RAW_64K:  return 65536u;      // 64KB

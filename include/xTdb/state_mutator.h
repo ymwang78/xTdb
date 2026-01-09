@@ -14,12 +14,12 @@ namespace xtdb {
 /// State mutation result
 enum class MutateResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_INVALID_TRANSITION,  // Attempted 0->1 bit flip
-    ERROR_ALREADY_SET,         // State already in target state
-    ERROR_INVALID_OFFSET,
-    ERROR_READ_FAILED,
-    ERROR_WRITE_FAILED
+    ERR_IO_FAILED,
+    ERR_INVALID_TRANSITION,  // Attempted 0->1 bit flip
+    ERR_ALREADY_SET,         // State already in target state
+    ERR_INVALID_OFFSET,
+    ERR_READ_FAILED,
+    ERR_WRITE_FAILED
 };
 
 class StateMutator {

@@ -12,9 +12,9 @@ namespace xtdb {
 /// Resampling result
 enum class ResampleResult {
     SUCCESS = 0,
-    ERROR_INVALID_INTERVAL,
-    ERROR_EMPTY_INPUT,
-    ERROR_INVALID_DATA
+    ERR_INVALID_INTERVAL,
+    ERR_EMPTY_INPUT,
+    ERR_INVALID_DATA
 };
 
 /// Aggregation method for resampling

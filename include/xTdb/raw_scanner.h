@@ -17,10 +17,10 @@ namespace xtdb {
 /// Scan result
 enum class ScanResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_INVALID_CHUNK,
-    ERROR_NOT_SEALED,
-    ERROR_CRC_MISMATCH
+    ERR_IO_FAILED,
+    ERR_INVALID_CHUNK,
+    ERR_NOT_SEALED,
+    ERR_CRC_MISMATCH
 };
 
 /// Scanned block metadata

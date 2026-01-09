@@ -284,7 +284,7 @@ TEST_F(WritePathTest, WALFullDetection) {
         entry.value.f64_value = static_cast<double>(i);
 
         WALResult result = wal.append(entry);
-        if (result == WALResult::ERROR_FULL) {
+        if (result == WALResult::ERR_FULL) {
             break;
         }
         ASSERT_EQ(WALResult::SUCCESS, result);

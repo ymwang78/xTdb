@@ -20,10 +20,10 @@ namespace xtdb {
 /// Read result
 enum class ReadResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_INVALID_BLOCK,
-    ERROR_CRC_MISMATCH,
-    ERROR_PARSE_FAILED
+    ERR_IO_FAILED,
+    ERR_INVALID_BLOCK,
+    ERR_CRC_MISMATCH,
+    ERR_PARSE_FAILED
 };
 
 /// Read statistics

@@ -65,7 +65,7 @@ IOResult AlignedIO::open(const std::string& path,
 #endif
     if (fd_ < 0) {
         setError("Failed to open file: " + std::string(strerror(errno)));
-        return IOResult::ERROR_OPEN_FAILED;
+        return IOResult::ERR_OPENFD_FAILED;
     }
 
     return IOResult::SUCCESS;
@@ -107,21 +107,21 @@ bool AlignedIO::validateAlignment(const void* buffer,
 IOResult AlignedIO::write(const void* buffer, uint64_t size, uint64_t offset) {
     if (fd_ < 0) {
         setError("File not open");
-        return IOResult::ERROR_INVALID_FD;
+        return IOResult::ERR_INVALID_FD;
     }
 
     // CRITICAL: Enforce alignment constraints
     if (!validateAlignment(buffer, size, offset)) {
         setError("Alignment constraint violated: buffer, size, and offset "
                 "must be 16KB-aligned");
-        return IOResult::ERROR_ALIGNMENT;
+        return IOResult::ERR_ALIGNMENT;
     }
 
     // Perform pwrite
 #ifdef _WIN32
-    if (::_lseek(fd_, offset, SEEK_SET) == -1) {
+    if (::_lseeki64(fd_, offset, SEEK_SET) == -1) {
         setError("lseek failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
     int written = ::_write(fd_, buffer, static_cast<unsigned int>(size));
 #else
@@ -129,13 +129,13 @@ IOResult AlignedIO::write(const void* buffer, uint64_t size, uint64_t offset) {
 #endif
     if (written < 0) {
         setError("pwrite failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
 
     if (static_cast<uint64_t>(written) != size) {
         setError("Partial write: expected " + std::to_string(size) +
                 " bytes, wrote " + std::to_string(written) + " bytes");
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
 
     // Update statistics
@@ -148,21 +148,21 @@ IOResult AlignedIO::write(const void* buffer, uint64_t size, uint64_t offset) {
 IOResult AlignedIO::read(void* buffer, uint64_t size, uint64_t offset) {
     if (fd_ < 0) {
         setError("File not open");
-        return IOResult::ERROR_INVALID_FD;
+        return IOResult::ERR_INVALID_FD;
     }
 
     // CRITICAL: Enforce alignment constraints
     if (!validateAlignment(buffer, size, offset)) {
         setError("Alignment constraint violated: buffer, size, and offset "
                 "must be 16KB-aligned");
-        return IOResult::ERROR_ALIGNMENT;
+        return IOResult::ERR_ALIGNMENT;
     }
 
     // Perform pread
 #ifdef _WIN32
-    if (::_lseek(fd_, offset, SEEK_SET) == -1) {
+    if (::_lseeki64(fd_, offset, SEEK_SET) == -1) {
         setError("lseek failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
     int bytes_read = ::_read(fd_, buffer, static_cast<unsigned int>(size));
 #else
@@ -170,13 +170,13 @@ IOResult AlignedIO::read(void* buffer, uint64_t size, uint64_t offset) {
 #endif
     if (bytes_read < 0) {
         setError("pread failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
 
     if (static_cast<uint64_t>(bytes_read) != size) {
         setError("Partial read: expected " + std::to_string(size) +
                 " bytes, read " + std::to_string(bytes_read) + " bytes");
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
 
     // Update statistics
@@ -189,13 +189,13 @@ IOResult AlignedIO::read(void* buffer, uint64_t size, uint64_t offset) {
 IOResult AlignedIO::preallocate(uint64_t size) {
     if (fd_ < 0) {
         setError("File not open");
-        return IOResult::ERROR_INVALID_FD;
+        return IOResult::ERR_INVALID_FD;
     }
 
     // Check alignment
     if (!isExtentAligned(size)) {
         setError("Preallocate size must be extent-aligned");
-        return IOResult::ERROR_ALIGNMENT;
+        return IOResult::ERR_ALIGNMENT;
     }
 
 #ifdef __linux__
@@ -203,23 +203,23 @@ IOResult AlignedIO::preallocate(uint64_t size) {
     int ret = ::fallocate(fd_, 0, 0, size);
     if (ret != 0) {
         setError("fallocate failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_PREALLOCATE_FAILED;
+        return IOResult::ERR_PREALLOCATE_FAILED;
     }
 #elif defined(_WIN32)
     // Windows: use SetEndOfFile after seeking
-    if (::_lseek(fd_, size, SEEK_SET) == -1) {
+    if (::_lseeki64(fd_, size, SEEK_SET) == -1) {
         setError("lseek failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_PREALLOCATE_FAILED;
+        return IOResult::ERR_PREALLOCATE_FAILED;
     }
-    if (::_chsize(fd_, size) != 0) {
+    if (::_chsize_s(fd_, size) != 0) {
         setError("chsize failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_PREALLOCATE_FAILED;
+        return IOResult::ERR_PREALLOCATE_FAILED;
     }
 #else
     // Fallback: use ftruncate
     if (::ftruncate(fd_, size) != 0) {
         setError("ftruncate failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_PREALLOCATE_FAILED;
+        return IOResult::ERR_PREALLOCATE_FAILED;
     }
 #endif
 
@@ -229,18 +229,18 @@ IOResult AlignedIO::preallocate(uint64_t size) {
 IOResult AlignedIO::sync() {
     if (fd_ < 0) {
         setError("File not open");
-        return IOResult::ERROR_INVALID_FD;
+        return IOResult::ERR_INVALID_FD;
     }
 
 #ifdef _WIN32
     if (::_commit(fd_) != 0) {
         setError("commit failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
 #else
     if (::fsync(fd_) != 0) {
         setError("fsync failed: " + std::string(strerror(errno)));
-        return IOResult::ERROR_IO_FAILED;
+        return IOResult::ERR_IO_FAILED;
     }
 #endif
 

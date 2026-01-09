@@ -37,7 +37,7 @@ Quantized16Decoder::DecodeResult Quantized16Decoder::decode(
     // Validate range
     if (range_ <= 0.0 || !std::isfinite(range_)) {
         setError("Invalid range: high must be > low");
-        return DecodeResult::ERROR_INVALID_RANGE;
+        return DecodeResult::ERR_INVALID_RANGE;
     }
 
     // Decode all points
@@ -49,7 +49,7 @@ Quantized16Decoder::DecodeResult Quantized16Decoder::decode(
         // Dequantize value
         if (!dequantizeValue(qp.quantized_value, rec.value.f64_value)) {
             setError("Failed to dequantize value");
-            return DecodeResult::ERROR_INVALID_DATA;
+            return DecodeResult::ERR_INVALID_DATA;
         }
 
         records.push_back(rec);

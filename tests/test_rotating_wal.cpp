@@ -170,7 +170,7 @@ void test_segment_rotation() {
         RotatingWALResult result = wal.append(entry);
         if (result == RotatingWALResult::SUCCESS) {
             entries_written++;
-        } else if (result == RotatingWALResult::ERROR_SEGMENT_NOT_CLEARED) {
+        } else if (result == RotatingWALResult::ERR_SEGMENT_NOT_CLEARED) {
             std::cout << "Segment not cleared (expected), stopping" << std::endl;
             break;
         } else {

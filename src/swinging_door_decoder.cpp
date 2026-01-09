@@ -1,4 +1,4 @@
-#include "xTdb/swinging_door_decoder.h"
+﻿#include "xTdb/swinging_door_decoder.h"
 #include <algorithm>
 
 namespace xtdb {
@@ -85,7 +85,7 @@ SwingingDoorDecoder::DecodeResult SwingingDoorDecoder::interpolate(
 
     if (compressed_points.empty()) {
         setError("No compressed points available");
-        return DecodeResult::ERROR_INVALID_DATA;
+        return DecodeResult::ERR_INVALID_DATA;
     }
 
     // 计算查询时间相对基准时间的偏移（微秒转毫秒）
@@ -93,7 +93,7 @@ SwingingDoorDecoder::DecodeResult SwingingDoorDecoder::interpolate(
 
     if (offset_us < 0) {
         setError("Query time is before base timestamp");
-        return DecodeResult::ERROR_TIME_OUT_OF_RANGE;
+        return DecodeResult::ERR_TIME_OUT_OF_RANGE;
     }
 
     uint32_t target_offset = static_cast<uint32_t>(offset_us / 1000);
@@ -102,7 +102,7 @@ SwingingDoorDecoder::DecodeResult SwingingDoorDecoder::interpolate(
     size_t left_idx, right_idx;
     if (!findSegment(compressed_points, target_offset, left_idx, right_idx)) {
         setError("Failed to find segment for target time");
-        return DecodeResult::ERROR_TIME_OUT_OF_RANGE;
+        return DecodeResult::ERR_TIME_OUT_OF_RANGE;
     }
 
     const auto& left_point = compressed_points[left_idx];
@@ -133,7 +133,7 @@ SwingingDoorDecoder::DecodeResult SwingingDoorDecoder::decode(
 
     if (start_ts_us > end_ts_us) {
         setError("Invalid time range: start > end");
-        return DecodeResult::ERROR_INVALID_DATA;
+        return DecodeResult::ERR_INVALID_DATA;
     }
 
     // 返回在时间范围内的压缩点，以及边界点（用于插值）

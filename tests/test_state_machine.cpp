@@ -308,7 +308,7 @@ TEST_F(StateMachineTest, PreventDoubleAllocation) {
     ASSERT_EQ(MutateResult::SUCCESS, mutator_->allocateChunk(0));
 
     // Second allocation should fail
-    EXPECT_EQ(MutateResult::ERROR_ALREADY_SET, mutator_->allocateChunk(0));
+    EXPECT_EQ(MutateResult::ERR_ALREADY_SET, mutator_->allocateChunk(0));
 }
 
 // Test 11: Prevent double seal
@@ -323,7 +323,7 @@ TEST_F(StateMachineTest, PreventDoubleSeal) {
               mutator_->sealChunk(0, 1000000, 2000000, 0x12345678));
 
     // Second seal should fail
-    EXPECT_EQ(MutateResult::ERROR_ALREADY_SET,
+    EXPECT_EQ(MutateResult::ERR_ALREADY_SET,
               mutator_->sealChunk(0, 1000000, 2000000, 0x12345678));
 }
 

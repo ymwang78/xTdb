@@ -1,4 +1,4 @@
-#ifndef XTDB_SWINGING_DOOR_ENCODER_H_
+﻿#ifndef XTDB_SWINGING_DOOR_ENCODER_H_
 #define XTDB_SWINGING_DOOR_ENCODER_H_
 
 #include "xTdb/constants.h"
@@ -17,9 +17,9 @@ public:
     /// 编码结果
     enum class EncodeResult {
         SUCCESS = 0,
-        ERROR_INVALID_TOLERANCE,
-        ERROR_INVALID_DATA,
-        ERROR_BUFFER_TOO_SMALL
+        ERR_INVALID_TOLERANCE,
+        ERR_INVALID_DATA,
+        ERR_BUFFER_TOO_SMALL
     };
 
     /// 压缩点（存储的关键端点）

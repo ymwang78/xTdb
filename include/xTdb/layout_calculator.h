@@ -18,8 +18,8 @@ struct ChunkLayout {
     uint32_t blocks_per_chunk;     // Total blocks in chunk
     uint32_t meta_blocks;          // Number of metadata blocks
     uint32_t data_blocks;          // Number of data blocks
-    uint64_t chunk_size_bytes;     // Total chunk size (in bytes)
-    uint64_t block_size_bytes;     // Block size (in bytes)
+    uint32_t chunk_size_bytes;     // Total chunk size (in bytes)
+    uint32_t block_size_bytes;     // Block size (in bytes)
 };
 
 /// Block directory entry size (from design V1.6 Section 7.2)

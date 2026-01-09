@@ -17,10 +17,10 @@ namespace xtdb {
 /// Chunk seal result
 enum class SealResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_INVALID_CHUNK,
-    ERROR_ALREADY_SEALED,
-    ERROR_CRC_FAILED
+    ERR_IO_FAILED,
+    ERR_INVALID_CHUNK,
+    ERR_ALREADY_SEALED,
+    ERR_CRC_FAILED
 };
 
 /// Chunk sealer for finalizing chunk metadata

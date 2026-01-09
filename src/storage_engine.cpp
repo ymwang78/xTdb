@@ -39,7 +39,7 @@ StorageEngine::~StorageEngine() {
 EngineResult StorageEngine::open() {
     if (is_open_) {
         setError("Engine already open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     // Step 1: Connect to metadata (SQLite)
@@ -68,7 +68,7 @@ EngineResult StorageEngine::open() {
     IContainer* writable_container = container_manager_->getWritableContainer();
     if (!writable_container) {
         setError("No writable container available for thread pool");
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
     std::string container_path = writable_container->getIdentifier();
 
@@ -78,7 +78,7 @@ EngineResult StorageEngine::open() {
         IOResult io_result = thread_io->open(container_path, false, false);
         if (io_result != IOResult::SUCCESS) {
             setError("Failed to open per-thread I/O: " + thread_io->getLastError());
-            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+            return EngineResult::ERR_CONTAINER_OPEN_FAILED;
         }
         io_pool_.push_back(std::move(thread_io));
     }
@@ -173,14 +173,14 @@ EngineResult StorageEngine::connectMetadata() {
     SyncResult result = metadata_->open();
     if (result != SyncResult::SUCCESS) {
         setError("Failed to open metadata: " + metadata_->getLastError());
-        return EngineResult::ERROR_METADATA_OPEN_FAILED;
+        return EngineResult::ERR_METADATA_OPEN_FAILED;
     }
 
     // Initialize schema
     result = metadata_->initSchema();
     if (result != SyncResult::SUCCESS) {
         setError("Failed to init schema: " + metadata_->getLastError());
-        return EngineResult::ERROR_METADATA_OPEN_FAILED;
+        return EngineResult::ERR_METADATA_OPEN_FAILED;
     }
 
     return EngineResult::SUCCESS;
@@ -208,7 +208,7 @@ EngineResult StorageEngine::mountContainers() {
         // Use block device path
         if (config_.block_device_path.empty()) {
             setError("Block device path not specified");
-            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+            return EngineResult::ERR_CONTAINER_OPEN_FAILED;
         }
         container_config.path = config_.block_device_path;
     } else {
@@ -230,14 +230,14 @@ EngineResult StorageEngine::mountContainers() {
     ManagerResult mgr_result = container_manager_->initialize();
     if (mgr_result != ManagerResult::SUCCESS) {
         setError("Failed to initialize container manager: " + container_manager_->getLastError());
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Get writable container and register it
     IContainer* writable_container = container_manager_->getWritableContainer();
     if (!writable_container) {
         setError("No writable container available");
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Register container info for backward compatibility
@@ -256,7 +256,7 @@ EngineResult StorageEngine::mountContainers() {
             io_ = file_container->getIO();
         } else {
             setError("Failed to cast container to FileContainer");
-            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+            return EngineResult::ERR_CONTAINER_OPEN_FAILED;
         }
     } else if (config_.container_type == ContainerType::BLOCK_DEVICE) {
         BlockDeviceContainer* block_container = dynamic_cast<BlockDeviceContainer*>(writable_container);
@@ -264,16 +264,16 @@ EngineResult StorageEngine::mountContainers() {
             io_ = block_container->getIO();
         } else {
             setError("Failed to cast container to BlockDeviceContainer");
-            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+            return EngineResult::ERR_CONTAINER_OPEN_FAILED;
         }
     } else {
         setError("Unknown container type");
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     if (!io_) {
         setError("Failed to get I/O interface from container");
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Initialize Rotating WAL (independent container)
@@ -290,7 +290,7 @@ EngineResult StorageEngine::mountContainers() {
     RotatingWALResult wal_result = rotating_wal_->open();
     if (wal_result != RotatingWALResult::SUCCESS) {
         setError("Failed to open rotating WAL: " + rotating_wal_->getLastError());
-        return EngineResult::ERROR_WAL_OPEN_FAILED;
+        return EngineResult::ERR_WAL_OPEN_FAILED;
     }
 
     // Set flush callback for WAL segment rotation
@@ -346,7 +346,7 @@ EngineResult StorageEngine::restoreActiveState() {
                                                       config_.layout,
                                                       scanned_chunk);
             if (scan_result == ScanResult::SUCCESS) {
-                active_chunk_.blocks_used = scanned_chunk.blocks.size();
+                active_chunk_.blocks_used = (uint32_t)scanned_chunk.blocks.size();
             }
 
             // Create DirectoryBuilder and load existing directory from disk
@@ -356,7 +356,7 @@ EngineResult StorageEngine::restoreActiveState() {
             DirBuildResult dir_result = dir_builder_->load();
             if (dir_result != DirBuildResult::SUCCESS) {
                 setError("Failed to load directory: " + dir_builder_->getLastError());
-                return EngineResult::ERROR_STATE_RESTORATION_FAILED;
+                return EngineResult::ERR_STATE_RESTORATION_FAILED;
             }
 
             return EngineResult::SUCCESS;
@@ -375,7 +375,7 @@ EngineResult StorageEngine::restoreActiveState() {
 EngineResult StorageEngine::replayWAL() {
     if (!rotating_wal_ || !io_) {
         setError("Rotating WAL or I/O not initialized");
-        return EngineResult::ERROR_WAL_OPEN_FAILED;
+        return EngineResult::ERR_WAL_OPEN_FAILED;
     }
 
     // Scan all segments to find entries
@@ -476,7 +476,7 @@ EngineResult StorageEngine::verifyContainerHeader(const std::string& container_p
     IOResult result = io_->read(buf.data(), kExtentSizeBytes, 0);
     if (result != IOResult::SUCCESS) {
         setError("Failed to read container header: " + io_->getLastError());
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Copy header
@@ -485,26 +485,26 @@ EngineResult StorageEngine::verifyContainerHeader(const std::string& container_p
     // Verify magic
     if (std::memcmp(header.magic, kContainerMagic, 8) != 0) {
         setError("Invalid container magic");
-        return EngineResult::ERROR_CONTAINER_HEADER_INVALID;
+        return EngineResult::ERR_CONTAINER_HEADER_INVALID;
     }
 
     // Verify version (0x0102 for V12)
     if (header.version != 0x0102) {
         setError("Unsupported container version");
-        return EngineResult::ERROR_CONTAINER_HEADER_INVALID;
+        return EngineResult::ERR_CONTAINER_HEADER_INVALID;
     }
 
     // Verify file size - check that file has at least the header
     struct stat st;
     if (stat(container_path.c_str(), &st) != 0) {
         setError("Failed to stat container file");
-        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        return EngineResult::ERR_CONTAINER_OPEN_FAILED;
     }
 
     // Verify container has minimum size (header + initial space)
     if (static_cast<uint64_t>(st.st_size) < kExtentSizeBytes) {
         setError("Container file too small");
-        return EngineResult::ERROR_CONTAINER_HEADER_INVALID;
+        return EngineResult::ERR_CONTAINER_HEADER_INVALID;
     }
 
     // Calculate expected container capacity
@@ -546,7 +546,7 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
                                     chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write chunk header: " + io_->getLastError());
-        return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+        return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
     }
 
     // Initialize directory (all blocks unsealed)
@@ -562,7 +562,7 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
                               dir_offset + i * config_.layout.block_size_bytes);
         if (io_result != IOResult::SUCCESS) {
             setError("Failed to write directory: " + io_->getLastError());
-            return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+            return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
         }
     }
 
@@ -570,7 +570,7 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
     MutateResult mut_result = mutator_->allocateChunk(chunk_offset);
     if (mut_result != MutateResult::SUCCESS) {
         setError("Failed to set chunk state: " + mutator_->getLastError());
-        return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+        return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
     }
 
     // Create DirectoryBuilder for this chunk
@@ -580,7 +580,7 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
     DirBuildResult dir_result = dir_builder_->initialize();
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to initialize directory: " + dir_builder_->getLastError());
-        return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+        return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
     }
 
     return EngineResult::SUCCESS;
@@ -592,7 +592,7 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
                                        uint8_t quality) {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     // Step 1: WAL Batch Buffering (Phase 3)
@@ -678,12 +678,12 @@ EngineResult StorageEngine::writePoint(const TagConfig* config,
                                       uint8_t quality) {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     if (!config) {
         setError("Tag configuration pointer is null");
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     uint32_t tag_id = config->tag_id;
@@ -793,11 +793,11 @@ EngineResult StorageEngine::flushWALBatch(uint32_t tag_id) {
     RotatingWALResult wal_result = rotating_wal_->batchAppend(batch_to_flush);
     if (wal_result != RotatingWALResult::SUCCESS) {
         setError("WAL batch append failed: " + rotating_wal_->getLastError());
-        return EngineResult::ERROR_WAL_OPEN_FAILED;
+        return EngineResult::ERR_WAL_OPEN_FAILED;
     }
 
     // Periodic WAL sync (every 10000 entries for better performance)
-    wal_entries_since_sync_ += batch_to_flush.size();
+    wal_entries_since_sync_ += (uint32_t)batch_to_flush.size();
     if (wal_entries_since_sync_ >= 10000) {
         rotating_wal_->sync();
         wal_entries_since_sync_ = 0;
@@ -868,7 +868,7 @@ void StorageEngine::walFlushThreadFunc() {
 EngineResult StorageEngine::flush() {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     // Phase 3: Flush all pending WAL batches before flushing buffers
@@ -925,7 +925,7 @@ EngineResult StorageEngine::flush() {
                                                      final_end_ts);
             if (seal_result != SealResult::SUCCESS) {
                 setError("Failed to seal chunk: " + sealer.getLastError());
-                return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+                return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
             }
 
             write_stats_.chunks_sealed++;
@@ -1053,14 +1053,14 @@ EngineResult StorageEngine::flush() {
     for (const auto& result : write_results) {
         if (!result.success) {
             setError(result.error_msg);
-            return EngineResult::ERROR_INVALID_DATA;
+            return EngineResult::ERR_INVALID_DAT;
         }
     }
 
     // Step 6: Batch directory updates (single-threaded for now)
     if (!dir_builder_) {
         setError("Directory builder not initialized");
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     for (const auto& result : write_results) {
@@ -1080,7 +1080,7 @@ EngineResult StorageEngine::flush() {
 
         if (dir_result != DirBuildResult::SUCCESS) {
             setError("Failed to seal block in directory: " + dir_builder_->getLastError());
-            return EngineResult::ERROR_INVALID_DATA;
+            return EngineResult::ERR_INVALID_DAT;
         }
 
         // Update stats
@@ -1102,7 +1102,7 @@ EngineResult StorageEngine::flush() {
     DirBuildResult dir_result = dir_builder_->writeDirectory();
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to write directory: " + dir_builder_->getLastError());
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     // Note: With rotating WAL, segment clearing is handled by
@@ -1118,7 +1118,7 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
                                         std::vector<QueryPoint>& results) {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     results.clear();
@@ -1276,7 +1276,7 @@ void StorageEngine::setError(const std::string& message) {
 EngineResult StorageEngine::runRetentionService(int64_t current_time_us) {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     // If retention is disabled (0 days), skip
@@ -1314,7 +1314,7 @@ EngineResult StorageEngine::runRetentionService(int64_t current_time_us) {
 
     if (result != SyncResult::SUCCESS) {
         setError("Failed to query chunks for retention: " + metadata_->getLastError());
-        return EngineResult::ERROR_METADATA_OPEN_FAILED;
+        return EngineResult::ERR_METADATA_OPEN_FAILED;
     }
 
     maintenance_stats_.last_retention_run_ts = current_time_us;
@@ -1324,7 +1324,7 @@ EngineResult StorageEngine::runRetentionService(int64_t current_time_us) {
 EngineResult StorageEngine::reclaimDeprecatedChunks() {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     // Scan container for deprecated chunks
@@ -1371,7 +1371,7 @@ EngineResult StorageEngine::reclaimDeprecatedChunks() {
 EngineResult StorageEngine::sealCurrentChunk() {
     if (!is_open_) {
         setError("Engine not open");
-        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+        return EngineResult::ERR_ENGINE_NOT_OPEN;
     }
 
     // Check if there's an active chunk with data
@@ -1397,7 +1397,7 @@ EngineResult StorageEngine::sealCurrentChunk() {
                                              final_end_ts);
     if (seal_result != SealResult::SUCCESS) {
         setError("Failed to seal chunk: " + sealer.getLastError());
-        return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+        return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
     }
 
     write_stats_.chunks_sealed++;
@@ -1413,7 +1413,7 @@ EngineResult StorageEngine::sealCurrentChunk() {
                                                      scanned_chunk);
         if (sync_result != SyncResult::SUCCESS) {
             setError("Failed to sync chunk metadata: " + metadata_->getLastError());
-            return EngineResult::ERROR_METADATA_OPEN_FAILED;
+            return EngineResult::ERR_METADATA_OPEN_FAILED;
         }
     }
 
@@ -1474,7 +1474,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
                                                  final_end_ts);
         if (seal_result != SealResult::SUCCESS) {
             setError("Failed to seal chunk: " + sealer.getLastError());
-            return EngineResult::ERROR_CHUNK_ALLOCATION_FAILED;
+            return EngineResult::ERR_CHUNK_ALLOCATION_FAILED;
         }
 
         write_stats_.chunks_sealed++;
@@ -1509,7 +1509,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
                                                      &data_crc32);
     if (write_result != BlockWriteResult::SUCCESS) {
         setError("Failed to write block: " + writer.getLastError());
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     write_stats_.blocks_flushed++;
@@ -1517,7 +1517,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
     // Update directory entry using persistent dir_builder
     if (!dir_builder_) {
         setError("Directory builder not initialized");
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     // Get timestamp range from tag_buffer
@@ -1557,14 +1557,14 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
 
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to seal block in directory: " + dir_builder_->getLastError());
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     // Write directory to disk
     dir_result = dir_builder_->writeDirectory();
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to write directory: " + dir_builder_->getLastError());
-        return EngineResult::ERROR_INVALID_DATA;
+        return EngineResult::ERR_INVALID_DAT;
     }
 
     // Update active chunk tracking

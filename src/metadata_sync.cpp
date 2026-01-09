@@ -17,7 +17,7 @@ SyncResult MetadataSync::open() {
         setError("Failed to open database: " + std::string(sqlite3_errmsg(db_)));
         sqlite3_close(db_);
         db_ = nullptr;
-        return SyncResult::ERROR_DB_OPEN_FAILED;
+        return SyncResult::ERR_DB_OPEN_FAILED;
     }
 
     // Enable WAL mode for better concurrency
@@ -41,7 +41,7 @@ SyncResult MetadataSync::executeSql(const std::string& sql) {
         std::string error = err_msg ? err_msg : "Unknown error";
         sqlite3_free(err_msg);
         setError("SQL execution failed: " + error);
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;
@@ -117,7 +117,7 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
     if (rc != SQLITE_OK) {
         executeSql("ROLLBACK;");
         setError("Failed to prepare chunk insert: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     sqlite3_bind_int(stmt, 1, scanned_chunk.chunk_id);
@@ -127,7 +127,7 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
     sqlite3_bind_int64(stmt, 5, scanned_chunk.end_ts_us);
     sqlite3_bind_int(stmt, 6, scanned_chunk.super_crc32);
     sqlite3_bind_int(stmt, 7, scanned_chunk.is_sealed ? 1 : 0);
-    sqlite3_bind_int(stmt, 8, scanned_chunk.blocks.size());
+    sqlite3_bind_int(stmt, 8, (int)scanned_chunk.blocks.size());
 
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -135,7 +135,7 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
     if (rc != SQLITE_DONE) {
         executeSql("ROLLBACK;");
         setError("Failed to insert chunk: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     // Insert blocks
@@ -151,7 +151,7 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
         if (rc != SQLITE_OK) {
             executeSql("ROLLBACK;");
             setError("Failed to prepare block insert: " + std::string(sqlite3_errmsg(db_)));
-            return SyncResult::ERROR_DB_PREPARE_FAILED;
+            return SyncResult::ERR_DB_PREPARE_FAILED;
         }
 
         sqlite3_bind_int(stmt, 1, scanned_chunk.chunk_id);
@@ -170,7 +170,7 @@ SyncResult MetadataSync::syncChunk(uint64_t chunk_offset,
         if (rc != SQLITE_DONE) {
             executeSql("ROLLBACK;");
             setError("Failed to insert block: " + std::string(sqlite3_errmsg(db_)));
-            return SyncResult::ERROR_DB_EXEC_FAILED;
+            return SyncResult::ERR_DB_EXEC_FAILED;
         }
     }
 
@@ -195,7 +195,7 @@ SyncResult MetadataSync::queryBlocksByTag(uint32_t tag_id,
     int rc = sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare query: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     sqlite3_bind_int(stmt, 1, tag_id);
@@ -219,7 +219,7 @@ SyncResult MetadataSync::queryBlocksByTag(uint32_t tag_id,
 
     if (rc != SQLITE_DONE) {
         setError("Query execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;
@@ -242,7 +242,7 @@ SyncResult MetadataSync::queryBlocksByTimeRange(int64_t start_ts_us,
     int rc = sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare query: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     sqlite3_bind_int64(stmt, 1, end_ts_us);
@@ -267,7 +267,7 @@ SyncResult MetadataSync::queryBlocksByTimeRange(int64_t start_ts_us,
 
     if (rc != SQLITE_DONE) {
         setError("Query execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;
@@ -291,7 +291,7 @@ SyncResult MetadataSync::queryBlocksByTagAndTime(uint32_t tag_id,
     int rc = sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare query: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     sqlite3_bind_int(stmt, 1, tag_id);
@@ -317,7 +317,7 @@ SyncResult MetadataSync::queryBlocksByTagAndTime(uint32_t tag_id,
 
     if (rc != SQLITE_DONE) {
         setError("Query execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;
@@ -332,7 +332,7 @@ SyncResult MetadataSync::getAllTags(std::vector<uint32_t>& tag_ids) {
     int rc = sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare query: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
@@ -343,7 +343,7 @@ SyncResult MetadataSync::getAllTags(std::vector<uint32_t>& tag_ids) {
 
     if (rc != SQLITE_DONE) {
         setError("Query execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;
@@ -363,7 +363,7 @@ SyncResult MetadataSync::querySealedChunks(uint32_t container_id,
                                           std::function<void(uint32_t, uint64_t, int64_t, int64_t)> callback) {
     if (!db_) {
         setError("Database not open");
-        return SyncResult::ERROR_DB_OPEN_FAILED;
+        return SyncResult::ERR_DB_OPEN_FAILED;
     }
 
     // Query chunks table for sealed chunks in time range
@@ -384,7 +384,7 @@ SyncResult MetadataSync::querySealedChunks(uint32_t container_id,
     int rc = sqlite3_prepare_v2(db_, query.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare query: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     // Bind parameters
@@ -411,7 +411,7 @@ SyncResult MetadataSync::querySealedChunks(uint32_t container_id,
 
     if (rc != SQLITE_DONE) {
         setError("Query execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;
@@ -420,7 +420,7 @@ SyncResult MetadataSync::querySealedChunks(uint32_t container_id,
 SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
     if (!db_) {
         setError("Database not open");
-        return SyncResult::ERROR_DB_OPEN_FAILED;
+        return SyncResult::ERR_DB_OPEN_FAILED;
     }
 
     // Delete from chunks table
@@ -430,7 +430,7 @@ SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare delete: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     sqlite3_bind_int(stmt, 1, container_id);
@@ -441,7 +441,7 @@ SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
 
     if (rc != SQLITE_DONE) {
         setError("Delete execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     // Also delete related blocks
@@ -451,7 +451,7 @@ SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
     rc = sqlite3_prepare_v2(db_, block_sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
         setError("Failed to prepare block delete: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_PREPARE_FAILED;
+        return SyncResult::ERR_DB_PREPARE_FAILED;
     }
 
     sqlite3_bind_int(stmt, 1, chunk_id);
@@ -461,7 +461,7 @@ SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
 
     if (rc != SQLITE_DONE) {
         setError("Block delete execution failed: " + std::string(sqlite3_errmsg(db_)));
-        return SyncResult::ERROR_DB_EXEC_FAILED;
+        return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
     return SyncResult::SUCCESS;

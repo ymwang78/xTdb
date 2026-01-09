@@ -343,7 +343,7 @@ TEST_F(SealDirectoryTest, DoubleSealPrevention) {
                                    50, 0x12345678));
 
     // Try to seal again
-    EXPECT_EQ(DirBuildResult::ERROR_BLOCK_SEALED,
+    EXPECT_EQ(DirBuildResult::ERR_BLOCK_SEALED,
               dir_builder.sealBlock(0, 100, 1000000, 2000000,
                                    TimeUnit::TU_MS, ValueType::VT_F64,
                                    50, 0x12345678));
@@ -355,7 +355,7 @@ TEST_F(SealDirectoryTest, InvalidBlockIndex) {
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.initialize());
 
     // Try to seal block beyond range
-    EXPECT_EQ(DirBuildResult::ERROR_INVALID_BLOCK,
+    EXPECT_EQ(DirBuildResult::ERR_INVALID_BLOCK,
               dir_builder.sealBlock(layout_.data_blocks + 1,
                                    100, 1000000, 2000000,
                                    TimeUnit::TU_MS, ValueType::VT_F64,

@@ -80,13 +80,13 @@ ReadResult BlockReader::parseRecords(const void* data,
 
     if (record_size == 0) {
         setError("Invalid value type");
-        return ReadResult::ERROR_INVALID_BLOCK;
+        return ReadResult::ERR_INVALID_BLOCK;
     }
 
     // Check if buffer has enough space
     if (size < record_count * record_size) {
         setError("Buffer too small for record count");
-        return ReadResult::ERROR_PARSE_FAILED;
+        return ReadResult::ERR_PARSE_FAILED;
     }
 
     records.clear();
@@ -149,7 +149,7 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
     IOResult io_result = io_->read(buffer.data(), layout_.block_size_bytes, block_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read data block: " + io_->getLastError());
-        return ReadResult::ERROR_IO_FAILED;
+        return ReadResult::ERR_IO_FAILED;
     }
 
     // Parse records
@@ -189,7 +189,7 @@ ReadResult BlockReader::verifyBlockIntegrity(uint64_t chunk_offset,
     IOResult io_result = io_->read(buffer.data(), layout_.block_size_bytes, block_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read block for CRC: " + io_->getLastError());
-        return ReadResult::ERROR_IO_FAILED;
+        return ReadResult::ERR_IO_FAILED;
     }
 
     // Calculate CRC32
@@ -198,7 +198,7 @@ ReadResult BlockReader::verifyBlockIntegrity(uint64_t chunk_offset,
     // Verify CRC
     if (calculated_crc != expected_crc32) {
         setError("Block CRC mismatch");
-        return ReadResult::ERROR_CRC_MISMATCH;
+        return ReadResult::ERR_CRC_MISMATCH;
     }
 
     return ReadResult::SUCCESS;
@@ -218,7 +218,7 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
     IOResult io_result = io_->read(buffer.data(), layout_.block_size_bytes, block_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read data block: " + io_->getLastError());
-        return ReadResult::ERROR_IO_FAILED;
+        return ReadResult::ERR_IO_FAILED;
     }
 
     records.clear();
@@ -295,7 +295,7 @@ ReadResult BlockReader::readBlock(uint64_t chunk_offset,
         auto decode_result = decoder.decode(dir_entry.start_ts_us, quantized, records);
         if (decode_result != Quantized16Decoder::DecodeResult::SUCCESS) {
             setError("16-bit Quantization decoding failed: " + decoder.getLastError());
-            return ReadResult::ERROR_PARSE_FAILED;
+            return ReadResult::ERR_PARSE_FAILED;
         }
 
         stats_.blocks_read++;

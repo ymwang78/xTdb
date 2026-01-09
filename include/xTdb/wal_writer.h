@@ -39,9 +39,9 @@ static_assert(sizeof(WALEntry) == 24, "WALEntry must be 24 bytes");
 /// WAL operation result
 enum class WALResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_INVALID_ENTRY,
-    ERROR_FULL
+    ERR_IO_FAILED,
+    ERR_INVALID_ENTRY,
+    ERR_FULL
 };
 
 /// WAL statistics

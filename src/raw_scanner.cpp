@@ -61,7 +61,7 @@ ScanResult RawScanner::readChunkHeader(uint64_t chunk_offset,
     IOResult result = io_->read(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to read chunk header: " + io_->getLastError());
-        return ScanResult::ERROR_IO_FAILED;
+        return ScanResult::ERR_IO_FAILED;
     }
 
     // Copy header
@@ -70,13 +70,13 @@ ScanResult RawScanner::readChunkHeader(uint64_t chunk_offset,
     // Verify magic
     if (std::memcmp(header.magic, kRawChunkMagic, 8) != 0) {
         setError("Invalid chunk magic");
-        return ScanResult::ERROR_INVALID_CHUNK;
+        return ScanResult::ERR_INVALID_CHUNK;
     }
 
     // Verify version
     if (header.version != 0x0106) {
         setError("Unsupported chunk version");
-        return ScanResult::ERROR_INVALID_CHUNK;
+        return ScanResult::ERR_INVALID_CHUNK;
     }
 
     return ScanResult::SUCCESS;
@@ -96,7 +96,7 @@ ScanResult RawScanner::readBlockDirectory(uint64_t chunk_offset,
     IOResult result = io_->read(buffer.data(), meta_region_size, chunk_offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to read block directory: " + io_->getLastError());
-        return ScanResult::ERROR_IO_FAILED;
+        return ScanResult::ERR_IO_FAILED;
     }
 
     // Extract directory entries (starts after chunk header)
@@ -123,7 +123,7 @@ ScanResult RawScanner::calculateSuperCRC(uint64_t chunk_offset,
     IOResult result = io_->read(buffer.data(), buffer_size, dir_offset);
     if (result != IOResult::SUCCESS) {
         setError("Failed to read directory for CRC: " + io_->getLastError());
-        return ScanResult::ERROR_IO_FAILED;
+        return ScanResult::ERR_IO_FAILED;
     }
 
     // Calculate CRC32 over directory entries only (not padding)
@@ -196,7 +196,7 @@ ScanResult RawScanner::verifyChunkIntegrity(uint64_t chunk_offset,
     // Check if chunk is sealed
     if (!chunkIsSealed(header.flags)) {
         setError("Chunk is not sealed");
-        return ScanResult::ERROR_NOT_SEALED;
+        return ScanResult::ERR_NOT_SEALED;
     }
 
     // Calculate SuperCRC
@@ -209,7 +209,7 @@ ScanResult RawScanner::verifyChunkIntegrity(uint64_t chunk_offset,
     // Verify CRC
     if (calculated_crc != header.super_crc32) {
         setError("SuperCRC mismatch");
-        return ScanResult::ERROR_CRC_MISMATCH;
+        return ScanResult::ERR_CRC_MISMATCH;
     }
 
     return ScanResult::SUCCESS;

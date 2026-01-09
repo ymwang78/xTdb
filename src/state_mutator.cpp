@@ -31,7 +31,7 @@ MutateResult StateMutator::allocateChunk(uint64_t chunk_offset) {
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     RawChunkHeaderV16* header = reinterpret_cast<RawChunkHeaderV16*>(buffer.data());
@@ -39,7 +39,7 @@ MutateResult StateMutator::allocateChunk(uint64_t chunk_offset) {
     // Check if already allocated
     if (chunkIsAllocated(header->flags)) {
         setError("Chunk already allocated");
-        return MutateResult::ERROR_ALREADY_SET;
+        return MutateResult::ERR_ALREADY_SET;
     }
 
     // Clear ALLOCATED bit (1->0)
@@ -48,7 +48,7 @@ MutateResult StateMutator::allocateChunk(uint64_t chunk_offset) {
     // Validate transition
     if (!validateTransition(header->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     // Update flags
@@ -58,7 +58,7 @@ MutateResult StateMutator::allocateChunk(uint64_t chunk_offset) {
     io_result = io_->write(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -73,7 +73,7 @@ MutateResult StateMutator::sealChunk(uint64_t chunk_offset,
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     RawChunkHeaderV16* header = reinterpret_cast<RawChunkHeaderV16*>(buffer.data());
@@ -81,7 +81,7 @@ MutateResult StateMutator::sealChunk(uint64_t chunk_offset,
     // Check if already sealed
     if (chunkIsSealed(header->flags)) {
         setError("Chunk already sealed");
-        return MutateResult::ERROR_ALREADY_SET;
+        return MutateResult::ERR_ALREADY_SET;
     }
 
     // Clear SEALED bit (1->0)
@@ -90,7 +90,7 @@ MutateResult StateMutator::sealChunk(uint64_t chunk_offset,
     // Validate transition
     if (!validateTransition(header->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     // Update seal data
@@ -103,7 +103,7 @@ MutateResult StateMutator::sealChunk(uint64_t chunk_offset,
     io_result = io_->write(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -115,7 +115,7 @@ MutateResult StateMutator::deprecateChunk(uint64_t chunk_offset) {
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     RawChunkHeaderV16* header = reinterpret_cast<RawChunkHeaderV16*>(buffer.data());
@@ -123,7 +123,7 @@ MutateResult StateMutator::deprecateChunk(uint64_t chunk_offset) {
     // Check if already deprecated
     if (chunkIsDeprecated(header->flags)) {
         setError("Chunk already deprecated");
-        return MutateResult::ERROR_ALREADY_SET;
+        return MutateResult::ERR_ALREADY_SET;
     }
 
     // Clear DEPRECATED bit (1->0)
@@ -132,7 +132,7 @@ MutateResult StateMutator::deprecateChunk(uint64_t chunk_offset) {
     // Validate transition
     if (!validateTransition(header->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     // Update flags
@@ -142,7 +142,7 @@ MutateResult StateMutator::deprecateChunk(uint64_t chunk_offset) {
     io_result = io_->write(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -154,7 +154,7 @@ MutateResult StateMutator::markChunkFree(uint64_t chunk_offset) {
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     RawChunkHeaderV16* header = reinterpret_cast<RawChunkHeaderV16*>(buffer.data());
@@ -165,7 +165,7 @@ MutateResult StateMutator::markChunkFree(uint64_t chunk_offset) {
     // Validate transition
     if (!validateTransition(header->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     // Update flags
@@ -175,7 +175,7 @@ MutateResult StateMutator::markChunkFree(uint64_t chunk_offset) {
     io_result = io_->write(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -198,7 +198,7 @@ MutateResult StateMutator::sealBlock(uint64_t block_dir_entry_offset,
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     BlockDirEntryV16* entry = reinterpret_cast<BlockDirEntryV16*>(
@@ -207,7 +207,7 @@ MutateResult StateMutator::sealBlock(uint64_t block_dir_entry_offset,
     // Check if already sealed
     if (blockIsSealed(entry->flags)) {
         setError("Block already sealed");
-        return MutateResult::ERROR_ALREADY_SET;
+        return MutateResult::ERR_ALREADY_SET;
     }
 
     // Clear SEALED bit (1->0)
@@ -216,7 +216,7 @@ MutateResult StateMutator::sealBlock(uint64_t block_dir_entry_offset,
     // Validate transition
     if (!validateTransition(entry->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     // Update seal data
@@ -229,7 +229,7 @@ MutateResult StateMutator::sealBlock(uint64_t block_dir_entry_offset,
     io_result = io_->write(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -243,7 +243,7 @@ MutateResult StateMutator::assertMonotonicTime(uint64_t block_dir_entry_offset) 
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     BlockDirEntryV16* entry = reinterpret_cast<BlockDirEntryV16*>(
@@ -253,7 +253,7 @@ MutateResult StateMutator::assertMonotonicTime(uint64_t block_dir_entry_offset) 
 
     if (!validateTransition(entry->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     entry->flags = new_flags;
@@ -261,7 +261,7 @@ MutateResult StateMutator::assertMonotonicTime(uint64_t block_dir_entry_offset) 
     io_result = io_->write(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -275,7 +275,7 @@ MutateResult StateMutator::assertNoTimeGap(uint64_t block_dir_entry_offset) {
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     BlockDirEntryV16* entry = reinterpret_cast<BlockDirEntryV16*>(
@@ -285,7 +285,7 @@ MutateResult StateMutator::assertNoTimeGap(uint64_t block_dir_entry_offset) {
 
     if (!validateTransition(entry->flags, new_flags)) {
         setError("Invalid state transition: 0->1 bit flip detected");
-        return MutateResult::ERROR_INVALID_TRANSITION;
+        return MutateResult::ERR_INVALID_TRANSITION;
     }
 
     entry->flags = new_flags;
@@ -293,7 +293,7 @@ MutateResult StateMutator::assertNoTimeGap(uint64_t block_dir_entry_offset) {
     io_result = io_->write(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -314,7 +314,7 @@ MutateResult StateMutator::initChunkHeader(uint64_t chunk_offset,
     IOResult io_result = io_->write(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to init chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -342,7 +342,7 @@ MutateResult StateMutator::initBlockDirEntry(uint64_t block_dir_entry_offset,
     IOResult io_result = io_->write(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to init block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_WRITE_FAILED;
+        return MutateResult::ERR_WRITE_FAILED;
     }
 
     return MutateResult::SUCCESS;
@@ -358,7 +358,7 @@ MutateResult StateMutator::readChunkHeader(uint64_t chunk_offset,
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, chunk_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read chunk header: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     std::memcpy(&header, buffer.data(), sizeof(RawChunkHeaderV16));
@@ -374,7 +374,7 @@ MutateResult StateMutator::readBlockDirEntry(uint64_t block_dir_entry_offset,
     IOResult io_result = io_->read(buffer.data(), kExtentSizeBytes, extent_offset);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to read block dir entry: " + io_->getLastError());
-        return MutateResult::ERROR_READ_FAILED;
+        return MutateResult::ERR_READ_FAILED;
     }
 
     std::memcpy(&entry,

@@ -33,13 +33,13 @@ WALResult WALWriter::append(const WALEntry& entry) {
     // Validate entry
     if (entry.tag_id == 0) {
         setError("Invalid entry: tag_id cannot be 0");
-        return WALResult::ERROR_INVALID_ENTRY;
+        return WALResult::ERR_INVALID_ENTRY;
     }
 
     // Check if WAL is full
     if (isFull()) {
         setError("WAL is full");
-        return WALResult::ERROR_FULL;
+        return WALResult::ERR_FULL;
     }
 
     // Check if buffer has space for this entry
@@ -82,7 +82,7 @@ WALResult WALWriter::flush() {
     IOResult io_result = io_->write(buffer_.data(), padded_size, current_offset_);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to write WAL: " + io_->getLastError());
-        return WALResult::ERROR_IO_FAILED;
+        return WALResult::ERR_IO_FAILED;
     }
 
     // Update offsets
@@ -106,7 +106,7 @@ WALResult WALWriter::sync() {
     IOResult io_result = io_->sync();
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to sync WAL: " + io_->getLastError());
-        return WALResult::ERROR_IO_FAILED;
+        return WALResult::ERR_IO_FAILED;
     }
 
     stats_.sync_operations++;
@@ -127,7 +127,7 @@ WALResult WALWriter::reset() {
     IOResult io_result = io_->write(zero_buf.data(), kExtentSizeBytes, wal_start_offset_);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to clear WAL region");
-        return WALResult::ERROR_IO_FAILED;
+        return WALResult::ERR_IO_FAILED;
     }
 
     // Reset write position

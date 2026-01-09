@@ -22,13 +22,13 @@ ManagerResult ContainerManager::initialize() {
 
     if (is_initialized_) {
         setError("Manager already initialized");
-        return ManagerResult::ERROR_INITIALIZATION_FAILED;
+        return ManagerResult::ERR_INITIALIZATION_FAILED;
     }
 
     // Validate configuration
     if (config_.containers.empty()) {
         setError("No containers configured");
-        return ManagerResult::ERROR_NO_CONTAINERS;
+        return ManagerResult::ERR_NO_CONTAINERS;
     }
 
     // Create and open all configured containers
@@ -41,7 +41,7 @@ ManagerResult ContainerManager::initialize() {
                 c->close();
             }
             containers_.clear();
-            return ManagerResult::ERROR_INITIALIZATION_FAILED;
+            return ManagerResult::ERR_INITIALIZATION_FAILED;
         }
 
         containers_.push_back(std::move(container));
@@ -189,12 +189,12 @@ ManagerResult ContainerManager::rollover() {
 
     if (!is_initialized_) {
         setError("Manager not initialized");
-        return ManagerResult::ERROR_ROLLOVER_FAILED;
+        return ManagerResult::ERR_ROLLOVER_FAILED;
     }
 
     if (config_.rollover_strategy == RolloverStrategy::NONE) {
         setError("Rollover not enabled");
-        return ManagerResult::ERROR_ROLLOVER_FAILED;
+        return ManagerResult::ERR_ROLLOVER_FAILED;
     }
 
     // Create new container
@@ -283,7 +283,7 @@ ManagerResult ContainerManager::createRolloverContainer() {
     auto container = ContainerFactory::create(new_config);
     if (!container) {
         setError("Failed to create rollover container: " + container_name);
-        return ManagerResult::ERROR_ROLLOVER_FAILED;
+        return ManagerResult::ERR_ROLLOVER_FAILED;
     }
 
     // Add to containers list and set as active

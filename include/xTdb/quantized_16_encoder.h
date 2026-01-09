@@ -17,9 +17,9 @@ public:
     /// Encode result
     enum class EncodeResult {
         SUCCESS = 0,
-        ERROR_INVALID_RANGE,
-        ERROR_VALUE_OUT_OF_RANGE,
-        ERROR_INVALID_DATA
+        ERR_INVALID_RANGE,
+        ERR_VALUE_OUT_OF_RANGE,
+        ERR_INVALID_DATA
     };
 
     /// Quantized point (compressed format)

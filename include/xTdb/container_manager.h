@@ -16,11 +16,11 @@ namespace xtdb {
 /// Container manager result codes
 enum class ManagerResult {
     SUCCESS = 0,
-    ERROR_NO_CONTAINERS,
-    ERROR_INITIALIZATION_FAILED,
-    ERROR_NO_WRITABLE_CONTAINER,
-    ERROR_ROLLOVER_FAILED,
-    ERROR_INVALID_INDEX
+    ERR_NO_CONTAINERS,
+    ERR_INITIALIZATION_FAILED,
+    ERR_NO_WRITABLE_CONTAINER,
+    ERR_ROLLOVER_FAILED,
+    ERR_INVALID_INDEX
 };
 
 /// Container manager configuration

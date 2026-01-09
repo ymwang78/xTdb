@@ -39,7 +39,7 @@ public:
     /// @return Future for the task result
     template<typename F, typename... Args>
     auto submit(F&& task, Args&&... args)
-        -> std::future<typename std::result_of<F(Args...)>::type>;
+        -> std::future<typename std::invoke_result_t<F, Args...>>;
 
     /// Wait for all pending tasks to complete
     void wait_all();
@@ -80,9 +80,9 @@ private:
 
 template<typename F, typename... Args>
 auto ThreadPool::submit(F&& task, Args&&... args)
-    -> std::future<typename std::result_of<F(Args...)>::type> {
+    -> std::future<typename std::invoke_result_t<F, Args...>> {
 
-    using return_type = typename std::result_of<F(Args...)>::type;
+    using return_type = typename std::invoke_result_t<F, Args...>;
 
     // Create packaged task
     auto packaged_task = std::make_shared<std::packaged_task<return_type()>>(

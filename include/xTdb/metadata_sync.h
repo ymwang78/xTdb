@@ -18,10 +18,10 @@ namespace xtdb {
 /// Sync result
 enum class SyncResult {
     SUCCESS = 0,
-    ERROR_DB_OPEN_FAILED,
-    ERROR_DB_EXEC_FAILED,
-    ERROR_DB_PREPARE_FAILED,
-    ERROR_INVALID_DATA
+    ERR_DB_OPEN_FAILED,
+    ERR_DB_EXEC_FAILED,
+    ERR_DB_PREPARE_FAILED,
+    ERR_INVALID_DATA
 };
 
 /// Query result for blocks

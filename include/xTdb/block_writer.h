@@ -18,10 +18,10 @@ namespace xtdb {
 /// Block write result
 enum class BlockWriteResult {
     SUCCESS = 0,
-    ERROR_IO_FAILED,
-    ERROR_BUFFER_TOO_LARGE,
-    ERROR_INVALID_LAYOUT,
-    ERROR_INVALID_BLOCK_INDEX
+    ERR_IO_FAILED,
+    ERR_BUFFER_TOO_LARGE,
+    ERR_INVALID_LAYOUT,
+    ERR_INVALID_BLOCK_INDEX
 };
 
 /// Block write statistics
