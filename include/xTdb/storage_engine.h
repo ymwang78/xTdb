@@ -135,7 +135,37 @@ public:
     /// Get metadata sync (for testing)
     MetadataSync* getMetadataSync() { return metadata_.get(); }
 
-    /// Write a single data point
+    /// Tag configuration provided by upper application layer
+    /// This is temporary configuration used only in memory for compression/debug
+    struct TagConfig {
+        uint32_t tag_id;
+        const char* tag_name;        // Optional, for debug logging (can be nullptr)
+        ValueType value_type;
+        TimeUnit time_unit;
+        EncodingType encoding_type;
+        double encoding_param1;      // tolerance / low_extreme
+        double encoding_param2;      // compression_factor / high_extreme
+
+        TagConfig()
+            : tag_id(0), tag_name(nullptr),
+              value_type(ValueType::VT_F64),
+              time_unit(TimeUnit::TU_MS),
+              encoding_type(EncodingType::ENC_RAW),
+              encoding_param1(0.0), encoding_param2(0.0) {}
+    };
+
+    /// Write a single data point with tag configuration
+    /// @param config Tag configuration (provided by application)
+    /// @param timestamp_us Timestamp in microseconds
+    /// @param value Value
+    /// @param quality Quality byte
+    /// @return EngineResult
+    EngineResult writePoint(const TagConfig* config,
+                           int64_t timestamp_us,
+                           double value,
+                           uint8_t quality = 192);
+
+    /// Write a single data point (legacy interface for backward compatibility)
     /// @param tag_id Tag ID
     /// @param timestamp_us Timestamp in microseconds
     /// @param value Value

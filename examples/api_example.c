@@ -3,7 +3,8 @@
  *
  * This example demonstrates how to use the xTdb C API for:
  * - Opening and closing a database
- * - Writing data points
+ * - Configuring tags with different encodings (RAW, SWINGING_DOOR, QUANTIZED_16)
+ * - Writing data points with tag configurations
  * - Querying data
  * - Running maintenance operations
  * - Getting statistics
@@ -51,10 +52,19 @@ int main(void) {
     printf("Step 3: Writing data points...\n");
     int64_t base_time = get_current_time_us();
 
-    // Write single points
+    // Configure tag 1001: Temperature sensor with RAW encoding
+    xtdb_tag_config_t tag1001_config;
+    xtdb_tag_config_init(&tag1001_config, 1001);
+    tag1001_config.tag_name = "Temperature_Sensor_01";
+    tag1001_config.value_type = XTDB_VT_F64;
+    tag1001_config.time_unit = XTDB_TU_MS;
+    tag1001_config.encoding_type = XTDB_ENC_RAW;
+    printf("  Tag 1001 (%s): RAW encoding, F64, 1ms resolution\n", tag1001_config.tag_name);
+
+    // Write single points with tag configuration
     for (int i = 0; i < 10; i++) {
         xtdb_point_t point;
-        point.tag_id = 1001;
+        point.tag_config = &tag1001_config;
         point.timestamp_us = base_time + i * 1000000LL;  // 1 second intervals
         point.value = 20.0 + i * 0.5;  // Temperature: 20.0 to 24.5
         point.quality = 192;  // GOOD quality
@@ -66,10 +76,22 @@ int main(void) {
     }
     printf("  Wrote 10 points for tag 1001\n");
 
-    // Write batch of points
+    // Configure tag 1002: Pressure sensor with SWINGING_DOOR compression
+    xtdb_tag_config_t tag1002_config;
+    xtdb_tag_config_init(&tag1002_config, 1002);
+    tag1002_config.tag_name = "Pressure_Sensor_01";
+    tag1002_config.value_type = XTDB_VT_F64;
+    tag1002_config.time_unit = XTDB_TU_MS;
+    tag1002_config.encoding_type = XTDB_ENC_SWINGING_DOOR;
+    tag1002_config.encoding_param1 = 0.5;  // tolerance = 0.5
+    tag1002_config.encoding_param2 = 1.0;  // compression_factor = 1.0 (typical range: 0.1-2.0)
+    printf("  Tag 1002 (%s): SWINGING_DOOR (tolerance=%.1f, factor=%.1f), F64, 1ms\n",
+           tag1002_config.tag_name, tag1002_config.encoding_param1, tag1002_config.encoding_param2);
+
+    // Write batch of points with compression
     xtdb_point_t batch[5];
     for (int i = 0; i < 5; i++) {
-        batch[i].tag_id = 1002;
+        batch[i].tag_config = &tag1002_config;
         batch[i].timestamp_us = base_time + i * 1000000LL;
         batch[i].value = 50.0 + i * 2.0;  // Pressure: 50.0 to 58.0
         batch[i].quality = 192;
@@ -79,6 +101,33 @@ int main(void) {
         fprintf(stderr, "Failed to write batch: %s\n", xtdb_error_string(err));
     }
     printf("  Wrote 5 points for tag 1002 (batch)\n");
+
+    // Configure tag 1003: Flow meter with QUANTIZED_16 compression
+    xtdb_tag_config_t tag1003_config;
+    xtdb_tag_config_init(&tag1003_config, 1003);
+    tag1003_config.tag_name = "Flow_Meter_01";
+    tag1003_config.value_type = XTDB_VT_F32;
+    tag1003_config.time_unit = XTDB_TU_100MS;
+    tag1003_config.encoding_type = XTDB_ENC_QUANTIZED_16;
+    tag1003_config.encoding_param1 = 0.0;    // low_extreme
+    tag1003_config.encoding_param2 = 100.0;  // high_extreme
+    printf("  Tag 1003 (%s): QUANTIZED_16 [%.1f, %.1f], F32, 100ms\n",
+           tag1003_config.tag_name, tag1003_config.encoding_param1, tag1003_config.encoding_param2);
+
+    // Write some points for tag 1003
+    for (int i = 0; i < 8; i++) {
+        xtdb_point_t point;
+        point.tag_config = &tag1003_config;
+        point.timestamp_us = base_time + i * 1000000LL;
+        point.value = 25.0 + i * 5.0;  // Flow: 25.0 to 60.0
+        point.quality = 192;
+
+        err = xtdb_write_point(db, &point);
+        if (err != XTDB_SUCCESS) {
+            fprintf(stderr, "Failed to write point: %s\n", xtdb_error_string(err));
+        }
+    }
+    printf("  Wrote 8 points for tag 1003\n");
     printf("\n");
 
     // Step 4: Flush to disk

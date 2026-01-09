@@ -96,6 +96,59 @@ static xtdb_error_t convertEngineResult(xtdb::EngineResult result) {
 }
 
 // ============================================================================
+// Type Conversion Helpers
+// ============================================================================
+
+/// Convert C API value type to C++ Core ValueType
+static xtdb::ValueType convertValueType(xtdb_value_type_t type) {
+    switch (type) {
+        case XTDB_VT_BOOL: return xtdb::ValueType::VT_BOOL;
+        case XTDB_VT_I32:  return xtdb::ValueType::VT_I32;
+        case XTDB_VT_F32:  return xtdb::ValueType::VT_F32;
+        case XTDB_VT_F64:  return xtdb::ValueType::VT_F64;
+        default:           return xtdb::ValueType::VT_F64;
+    }
+}
+
+/// Convert C API time unit to C++ Core TimeUnit
+static xtdb::TimeUnit convertTimeUnit(xtdb_time_unit_t unit) {
+    switch (unit) {
+        case XTDB_TU_100MS: return xtdb::TimeUnit::TU_100MS;
+        case XTDB_TU_10MS:  return xtdb::TimeUnit::TU_10MS;
+        case XTDB_TU_MS:    return xtdb::TimeUnit::TU_MS;
+        case XTDB_TU_100US: return xtdb::TimeUnit::TU_100US;
+        case XTDB_TU_10US:  return xtdb::TimeUnit::TU_10US;
+        case XTDB_TU_US:    return xtdb::TimeUnit::TU_US;
+        default:            return xtdb::TimeUnit::TU_MS;
+    }
+}
+
+/// Convert C API encoding type to C++ Core EncodingType
+static xtdb::EncodingType convertEncodingType(xtdb_encoding_type_t type) {
+    switch (type) {
+        case XTDB_ENC_RAW:            return xtdb::EncodingType::ENC_RAW;
+        case XTDB_ENC_SWINGING_DOOR:  return xtdb::EncodingType::ENC_SWINGING_DOOR;
+        case XTDB_ENC_QUANTIZED_16:   return xtdb::EncodingType::ENC_QUANTIZED_16;
+        case XTDB_ENC_GORILLA:        return xtdb::EncodingType::ENC_GORILLA;
+        case XTDB_ENC_DELTA_OF_DELTA: return xtdb::EncodingType::ENC_DELTA_OF_DELTA;
+        default:                      return xtdb::EncodingType::ENC_RAW;
+    }
+}
+
+/// Convert C API tag config to C++ Core TagConfig
+static xtdb::StorageEngine::TagConfig convertTagConfig(const xtdb_tag_config_t* c_config) {
+    xtdb::StorageEngine::TagConfig cpp_config;
+    cpp_config.tag_id = c_config->tag_id;
+    cpp_config.tag_name = c_config->tag_name;
+    cpp_config.value_type = convertValueType(c_config->value_type);
+    cpp_config.time_unit = convertTimeUnit(c_config->time_unit);
+    cpp_config.encoding_type = convertEncodingType(c_config->encoding_type);
+    cpp_config.encoding_param1 = c_config->encoding_param1;
+    cpp_config.encoding_param2 = c_config->encoding_param2;
+    return cpp_config;
+}
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
@@ -107,6 +160,18 @@ void xtdb_config_init(xtdb_config_t* config) {
     config->block_size_bytes = 16384;        // 16KB
     config->chunk_size_bytes = 256 * 1024 * 1024;  // 256MB
     config->retention_days = 0;  // No retention limit
+}
+
+void xtdb_tag_config_init(xtdb_tag_config_t* config, uint32_t tag_id) {
+    if (!config) return;
+
+    config->tag_id = tag_id;
+    config->tag_name = nullptr;  // Optional, for debug logging
+    config->value_type = XTDB_VT_F64;  // Default: 64-bit float
+    config->time_unit = XTDB_TU_MS;    // Default: millisecond
+    config->encoding_type = XTDB_ENC_RAW;  // Default: no compression
+    config->encoding_param1 = 0.0;     // Default: no parameters
+    config->encoding_param2 = 0.0;
 }
 
 // ============================================================================
@@ -200,6 +265,7 @@ const char* xtdb_get_last_error(xtdb_handle_t handle) {
 xtdb_error_t xtdb_write_point(xtdb_handle_t handle, const xtdb_point_t* point) {
     if (!handle) return XTDB_ERROR_INVALID_HANDLE;
     if (!point) return XTDB_ERROR_INVALID_PARAMETER;
+    if (!point->tag_config) return XTDB_ERROR_INVALID_PARAMETER;
 
     xtdb_handle_impl* impl = static_cast<xtdb_handle_impl*>(handle);
     std::lock_guard<std::mutex> lock(impl->mutex);
@@ -207,8 +273,12 @@ xtdb_error_t xtdb_write_point(xtdb_handle_t handle, const xtdb_point_t* point) {
     if (!impl->engine) return XTDB_ERROR_INVALID_HANDLE;
 
     try {
+        // Convert C API tag config to C++ Core TagConfig
+        xtdb::StorageEngine::TagConfig cpp_config = convertTagConfig(point->tag_config);
+
+        // Call new writePoint with TagConfig
         xtdb::EngineResult result = impl->engine->writePoint(
-            point->tag_id,
+            &cpp_config,
             point->timestamp_us,
             point->value,
             point->quality
@@ -242,8 +312,17 @@ xtdb_error_t xtdb_write_points(xtdb_handle_t handle,
         // Write points one by one
         // Future optimization: batch write in StorageEngine
         for (size_t i = 0; i < count; ++i) {
+            if (!points[i].tag_config) {
+                impl->last_error = "Tag configuration is null for point " + std::to_string(i);
+                return XTDB_ERROR_INVALID_PARAMETER;
+            }
+
+            // Convert C API tag config to C++ Core TagConfig
+            xtdb::StorageEngine::TagConfig cpp_config = convertTagConfig(points[i].tag_config);
+
+            // Call new writePoint with TagConfig
             xtdb::EngineResult result = impl->engine->writePoint(
-                points[i].tag_id,
+                &cpp_config,
                 points[i].timestamp_us,
                 points[i].value,
                 points[i].quality
@@ -353,7 +432,7 @@ xtdb_error_t xtdb_result_get(xtdb_result_set_t result_set,
     }
 
     const auto& qp = rs->points[index];
-    point->tag_id = 0;  // Note: QueryPoint doesn't store tag_id
+    point->tag_config = nullptr;  // Note: QueryPoint doesn't store tag config (read-only)
     point->timestamp_us = qp.timestamp_us;
     point->value = qp.value;
     point->quality = qp.quality;

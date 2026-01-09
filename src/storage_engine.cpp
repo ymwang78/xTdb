@@ -671,6 +671,104 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     return EngineResult::SUCCESS;
 }
 
+// New writePoint with TagConfig support
+EngineResult StorageEngine::writePoint(const TagConfig* config,
+                                      int64_t timestamp_us,
+                                      double value,
+                                      uint8_t quality) {
+    if (!is_open_) {
+        setError("Engine not open");
+        return EngineResult::ERROR_ENGINE_NOT_OPEN;
+    }
+
+    if (!config) {
+        setError("Tag configuration pointer is null");
+        return EngineResult::ERROR_INVALID_DATA;
+    }
+
+    uint32_t tag_id = config->tag_id;
+
+    // Step 1: Write to WAL with batching
+    if (rotating_wal_) {
+        WALEntry entry;
+        entry.tag_id = tag_id;
+        entry.timestamp_us = timestamp_us;
+        entry.value_type = static_cast<uint8_t>(config->value_type);
+        entry.quality = quality;
+        entry.value.f64_value = value;  // Assuming double for now
+
+        // Add to batch
+        bool should_notify_flush = false;
+        {
+            std::lock_guard<std::mutex> lock(wal_batch_mutex_);
+            wal_batches_[tag_id].push_back(entry);
+
+            // Trigger flush when batch is full
+            if (wal_batches_[tag_id].size() >= kWALBatchSize) {
+                should_notify_flush = true;
+            }
+        }
+
+        // Notify background flush thread (non-blocking)
+        if (should_notify_flush) {
+            std::lock_guard<std::mutex> lock(wal_flush_mutex_);
+            wal_flush_cv_.notify_one();
+        }
+    }
+
+    // Step 2: Add point to memory buffer
+    std::unique_lock<std::shared_mutex> lock(buffers_mutex_);
+
+    // Find or create TagBuffer for this tag
+    auto it = buffers_.find(tag_id);
+    if (it == buffers_.end()) {
+        // Create new buffer with configuration from upper layer
+        TagBuffer new_buffer;
+        new_buffer.tag_id = tag_id;
+        new_buffer.value_type = config->value_type;
+        new_buffer.time_unit = config->time_unit;
+        new_buffer.encoding_type = config->encoding_type;
+        new_buffer.encoding_tolerance = config->encoding_param1;
+        new_buffer.encoding_compression_factor = config->encoding_param2;
+        new_buffer.start_ts_us = timestamp_us;
+
+        buffers_[tag_id] = new_buffer;
+        it = buffers_.find(tag_id);
+
+        // Optional: Log tag creation with name if provided (for debugging)
+        if (config->tag_name != nullptr) {
+            // Debug logging could be added here if needed
+            // printf("Created buffer for tag %u: %s\n", tag_id, config->tag_name);
+        }
+    }
+
+    // Add record to buffer
+    TagBuffer& tag_buffer = it->second;
+
+    // Create MemRecord
+    MemRecord record;
+    record.time_offset = static_cast<uint32_t>((timestamp_us - tag_buffer.start_ts_us) / 1000);
+    record.quality = quality;
+    record.value.f64_value = value;
+    tag_buffer.records.push_back(record);
+
+    write_stats_.points_written++;
+
+    // Check if buffer needs flush before releasing lock
+    bool needs_flush = tag_buffer.records.size() >= 1000;
+    lock.unlock();
+
+    // Step 3: Check if buffer needs flush
+    if (needs_flush) {
+        EngineResult flush_result = flush();
+        if (flush_result != EngineResult::SUCCESS) {
+            return flush_result;
+        }
+    }
+
+    return EngineResult::SUCCESS;
+}
+
 EngineResult StorageEngine::flushWALBatch(uint32_t tag_id) {
     if (!rotating_wal_) {
         return EngineResult::SUCCESS;  // No WAL, skip

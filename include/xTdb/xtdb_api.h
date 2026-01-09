@@ -98,15 +98,64 @@ int xtdb_is_open(xtdb_handle_t handle);
 const char* xtdb_get_last_error(xtdb_handle_t handle);
 
 // ============================================================================
+// Tag Configuration
+// ============================================================================
+
+/// Value type enumeration
+typedef enum {
+    XTDB_VT_BOOL = 0,   ///< Boolean
+    XTDB_VT_I32  = 1,   ///< 32-bit integer
+    XTDB_VT_F32  = 2,   ///< 32-bit float
+    XTDB_VT_F64  = 3    ///< 64-bit float (default)
+} xtdb_value_type_t;
+
+/// Time unit enumeration
+typedef enum {
+    XTDB_TU_100MS = 0,  ///< 100 milliseconds
+    XTDB_TU_10MS  = 1,  ///< 10 milliseconds
+    XTDB_TU_MS    = 2,  ///< 1 millisecond (default)
+    XTDB_TU_100US = 3,  ///< 100 microseconds
+    XTDB_TU_10US  = 4,  ///< 10 microseconds
+    XTDB_TU_US    = 5   ///< 1 microsecond
+} xtdb_time_unit_t;
+
+/// Encoding type enumeration
+typedef enum {
+    XTDB_ENC_RAW            = 0,  ///< No compression (default)
+    XTDB_ENC_SWINGING_DOOR  = 1,  ///< Swinging Door compression
+    XTDB_ENC_QUANTIZED_16   = 2,  ///< 16-bit quantization
+    XTDB_ENC_GORILLA        = 3,  ///< Gorilla/XOR compression
+    XTDB_ENC_DELTA_OF_DELTA = 4   ///< Delta-of-Delta compression
+} xtdb_encoding_type_t;
+
+/// Tag configuration (provided by upper application layer)
+/// This configuration is used temporarily in xTdb Core for compression decisions
+/// and debug logging. It is NOT persisted by xTdb Core.
+typedef struct {
+    uint32_t tag_id;                ///< Tag identifier
+    const char* tag_name;           ///< Tag name (optional, for debug logging, can be NULL)
+    xtdb_value_type_t value_type;   ///< Value type
+    xtdb_time_unit_t time_unit;     ///< Time unit for compression
+    xtdb_encoding_type_t encoding_type;  ///< Encoding/compression method
+    double encoding_param1;         ///< Encoding parameter 1 (meaning depends on encoding_type)
+    double encoding_param2;         ///< Encoding parameter 2 (meaning depends on encoding_type)
+} xtdb_tag_config_t;
+
+/// Initialize tag configuration with default values
+/// @param config Configuration structure to initialize
+/// @param tag_id Tag identifier
+void xtdb_tag_config_init(xtdb_tag_config_t* config, uint32_t tag_id);
+
+// ============================================================================
 // Data Point Structure
 // ============================================================================
 
 /// Data point for write/read operations
 typedef struct {
-    uint32_t tag_id;        ///< Tag identifier
-    int64_t timestamp_us;   ///< Timestamp in microseconds (PostgreSQL epoch)
-    double value;           ///< Value (float64)
-    uint8_t quality;        ///< Quality byte (default: 192 = GOOD)
+    const xtdb_tag_config_t* tag_config;  ///< Tag configuration (provided by application)
+    int64_t timestamp_us;                 ///< Timestamp in microseconds (PostgreSQL epoch)
+    double value;                         ///< Value (float64)
+    uint8_t quality;                      ///< Quality byte (default: 192 = GOOD)
 } xtdb_point_t;
 
 // ============================================================================
