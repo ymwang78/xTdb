@@ -210,7 +210,7 @@ ContainerResult FileContainer::initializeNewContainer() {
 
     // Calculate capacity (16 chunks by default)
     uint32_t num_chunks = 16;
-    header.capacity_extents = (layout_.chunk_size_bytes * num_chunks) / kExtentSizeBytes;
+    header.capacity_extents = (static_cast<uint64_t>(layout_.chunk_size_bytes) * num_chunks) / kExtentSizeBytes;
     header.chunk_size_extents = layout_.chunk_size_bytes / kExtentSizeBytes;
     header.block_size_extents = layout_.block_size_bytes / kExtentSizeBytes;
     header.layout = static_cast<uint8_t>(ContainerLayout::LAYOUT_RAW_FIXED);

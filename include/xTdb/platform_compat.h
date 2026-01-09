@@ -48,10 +48,10 @@
     #include <sys/stat.h>
     #include <sys/types.h>
     #include <sys/uio.h>
-    
+
     // Path separator
     #define PATH_SEPARATOR "/"
-    
+
 #endif
 
 #endif // XTDB_PLATFORM_COMPAT_H_

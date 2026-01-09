@@ -82,7 +82,11 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
     // Detect device properties
     ContainerResult result = detectDeviceProperties();
     if (result != ContainerResult::SUCCESS) {
+#ifdef _WIN32
         ::_close(fd_);
+#else
+        ::close(fd_);
+#endif
         fd_ = -1;
         return result;
     }
@@ -102,7 +106,11 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
 #endif
     if (bytes_read < 0) {
         setError("Failed to read device header: " + std::string(strerror(errno)));
+#ifdef _WIN32
         ::_close(fd_);
+#else
+        ::close(fd_);
+#endif
         fd_ = -1;
         return ContainerResult::ERR_READ_FAILED;
     }
@@ -117,7 +125,11 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         // Valid header exists - read and validate
         result = readAndValidateHeader();
         if (result != ContainerResult::SUCCESS) {
+#ifdef _WIN32
             ::_close(fd_);
+#else
+            ::close(fd_);
+#endif
             fd_ = -1;
             return result;
         }
@@ -126,13 +138,21 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         if (create_if_not_exists && !read_only_) {
             result = initializeNewContainer();
             if (result != ContainerResult::SUCCESS) {
+#ifdef _WIN32
                 ::_close(fd_);
+#else
+                ::close(fd_);
+#endif
                 fd_ = -1;
                 return result;
             }
         } else {
             setError("Device has no valid container header");
+#ifdef _WIN32
             ::_close(fd_);
+#else
+            ::close(fd_);
+#endif
             fd_ = -1;
             return ContainerResult::ERR_INVALID_HEADER;
         }
@@ -150,7 +170,11 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
     IOResult io_result = io_->open(device_path_, create_if_not_exists, use_direct_io);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to open AlignedIO for device: " + io_->getLastError());
+#ifdef _WIN32
         ::_close(fd_);
+#else
+        ::close(fd_);
+#endif
         fd_ = -1;
         io_.reset();
             return ContainerResult::ERR_OPENFD_FAILED;
@@ -176,10 +200,11 @@ void BlockDeviceContainer::close() {
     if (fd_ >= 0) {
 #ifdef _WIN32
         ::_commit(fd_);  // Ensure all data is flushed
+        ::_close(fd_);
 #else
         ::fsync(fd_);  // Ensure all data is flushed
+        ::close(fd_);
 #endif
-        ::_close(fd_);
         fd_ = -1;
     }
 
