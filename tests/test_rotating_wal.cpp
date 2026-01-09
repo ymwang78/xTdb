@@ -1,20 +1,19 @@
 #include "xTdb/rotating_wal.h"
+#include "xTdb/platform_compat.h"
 #include <iostream>
 #include <cassert>
 #include <cstring>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <chrono>
 
 using namespace xtdb;
 
 // Test utilities
 void cleanup_test_files() {
-    unlink("./test_wal_container.raw");
-    unlink("./test_wal_rotation.raw");
-    unlink("./test_wal_clearreuse.raw");
-    unlink("./test_wal_usage.raw");
-    unlink("./test_wal_perf.raw");
+    unlink_file("./test_wal_container.raw");
+    unlink_file("./test_wal_rotation.raw");
+    unlink_file("./test_wal_clearreuse.raw");
+    unlink_file("./test_wal_usage.raw");
+    unlink_file("./test_wal_perf.raw");
 }
 
 void assert_success(RotatingWALResult result, const char* context) {
@@ -47,7 +46,7 @@ void test_basic_initialization() {
     assert(wal.getCurrentSegmentId() == 0);
 
     // Check file size
-    struct stat st;
+    struct stat st = {};
     stat(config.wal_container_path.c_str(), &st);
     uint64_t expected_size = 16 * 1024 +  // Header
                              (4 * 64 * 1024 * 1024);  // 4 segments × 64 MB

@@ -22,9 +22,38 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # ============================================================================
+# Platform Detection
+# ============================================================================
+if(WIN32)
+    set(IS_WINDOWS ON)
+else()
+    set(IS_WINDOWS OFF)
+endif()
+
+# ============================================================================
 # Dependencies
 # ============================================================================
 find_package(SQLite3 REQUIRED)
+
+# ============================================================================
+# Threading Library (cross-platform)
+# ============================================================================
+# On Windows with MSVC, pthread is not available
+# On Windows with MinGW, pthread may be available via pthread-win32
+# On Unix-like systems, pthread is standard
+if(IS_WINDOWS AND MSVC)
+    # MSVC uses Windows native threading (no need to link pthread)
+    set(THREAD_LIB "")
+else()
+    # Try to find pthread library
+    find_package(Threads QUIET)
+    if(Threads_FOUND)
+        set(THREAD_LIB Threads::Threads)
+    else()
+        # Fallback to explicit pthread link for Unix systems
+        set(THREAD_LIB pthread)
+    endif()
+endif()
 
 # ============================================================================
 # Include Directories
@@ -68,7 +97,7 @@ target_include_directories(xtdb_core PUBLIC
 
 target_link_libraries(xtdb_core PUBLIC
     SQLite::SQLite3
-    pthread
+    ${THREAD_LIB}
 )
 
 # ============================================================================
@@ -101,7 +130,7 @@ if(BUILD_EXAMPLES)
     )
     target_link_libraries(api_example
         xtdb_api
-        pthread
+        ${THREAD_LIB}
     )
     message(STATUS "Examples enabled: api_example")
 endif()
@@ -127,7 +156,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME AlignmentTest COMMAND test_alignment)
 
@@ -139,7 +168,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME LayoutTest COMMAND test_layout)
 
@@ -151,7 +180,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME StructSizeTest COMMAND test_struct_size)
 
@@ -163,7 +192,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME StateMachineTest COMMAND test_state_machine)
 
@@ -175,7 +204,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME WritePathTest COMMAND test_write_path)
 
@@ -187,7 +216,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME SealDirectoryTest COMMAND test_seal_directory)
 
@@ -199,7 +228,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME ReadRecoveryTest COMMAND test_read_recovery)
 
@@ -211,7 +240,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME EndToEndTest COMMAND test_end_to_end)
 
@@ -223,7 +252,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME RestartConsistencyTest COMMAND test_restart_consistency)
 
@@ -235,7 +264,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME WriteCoordinatorTest COMMAND test_write_coordinator)
 
@@ -247,7 +276,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME ReadCoordinatorTest COMMAND test_read_coordinator)
 
@@ -257,7 +286,7 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_hybrid_debug
         xtdb_core
-        pthread
+        ${THREAD_LIB}
     )
 
     # Test: Maintenance Services (T13 - Phase 10)
@@ -268,7 +297,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME MaintenanceServiceTest COMMAND test_maintenance)
 
@@ -280,7 +309,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME SwingingDoorTest COMMAND test_swinging_door)
 
@@ -292,7 +321,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME CompressionE2ETest COMMAND test_compression_e2e)
 
@@ -304,7 +333,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME Quantized16Test COMMAND test_quantized_16)
 
@@ -316,7 +345,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME ResamplingTest COMMAND test_resampling)
 
@@ -328,7 +357,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME ArchiveManagerTest COMMAND test_small_chunk)
 
@@ -340,7 +369,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME CompressionIntegrationTest COMMAND test_compression_integration)
 
@@ -352,7 +381,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME MultiResolutionQueryTest COMMAND test_multi_resolution_query)
 
@@ -364,7 +393,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME PerformanceBenchmarkTest COMMAND test_performance_benchmark)
 
@@ -376,7 +405,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME CrashRecoveryTest COMMAND test_crash_recovery)
 
@@ -388,7 +417,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME LargeScaleSimulationTest COMMAND test_large_scale_simulation)
 
@@ -398,7 +427,7 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_rotating_wal
         xtdb_core
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME RotatingWALTest COMMAND test_rotating_wal)
 
@@ -410,7 +439,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME ContainerAbstractionTest COMMAND test_container_abstraction)
 
@@ -422,7 +451,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME BlockDeviceIntegrationTest COMMAND test_block_device_integration)
 
@@ -434,7 +463,7 @@ if(BUILD_TESTS)
         xtdb_core
         GTest::GTest
         GTest::Main
-        pthread
+        ${THREAD_LIB}
     )
     add_test(NAME BlockDeviceAdvancedTest COMMAND test_block_device_advanced)
 

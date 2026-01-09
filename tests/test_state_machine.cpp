@@ -1,6 +1,7 @@
 #include "xTdb/state_mutator.h"
+#include "xTdb/platform_compat.h"
+#include "test_utils.h"
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 using namespace xtdb;
 
@@ -11,8 +12,9 @@ using namespace xtdb;
 class StateMachineTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_file_ = "/tmp/xtdb_state_test.dat";
-        ::unlink(test_file_.c_str());
+        std::string temp_dir = get_temp_dir();
+        test_file_ = join_path(temp_dir, "xtdb_state_test.dat");
+        unlink_file(test_file_);
 
         // Open file
         io_ = std::make_unique<AlignedIO>();
@@ -28,7 +30,7 @@ protected:
     void TearDown() override {
         mutator_.reset();
         io_.reset();
-        ::unlink(test_file_.c_str());
+        unlink_file(test_file_);
     }
 
     std::string test_file_;

@@ -3,9 +3,7 @@
 #include "xTdb/layout_calculator.h"
 #include "xTdb/file_container.h"
 #include "xTdb/block_device_container.h"
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include "xTdb/platform_compat.h"
 #include <cerrno>
 #include <cstring>
 #include <algorithm>
@@ -215,7 +213,8 @@ EngineResult StorageEngine::mountContainers() {
         container_config.path = config_.block_device_path;
     } else {
         // Use file-based path with pattern
-        container_config.path = config_.data_dir + "/" + config_.container_name_pattern;
+        // Use platform-independent path separator
+        container_config.path = config_.data_dir + PATH_SEPARATOR + config_.container_name_pattern;
         // Replace {index} with 0 for initial container
         size_t pos = container_config.path.find("{index}");
         if (pos != std::string::npos) {

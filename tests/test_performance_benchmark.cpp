@@ -1,4 +1,5 @@
 #include "../include/xTdb/storage_engine.h"
+#include "test_utils.h"
 #include <gtest/gtest.h>
 #include <chrono>
 #include <vector>
@@ -11,13 +12,17 @@ using namespace xtdb;
 class PerformanceBenchmark : public ::testing::Test {
 protected:
     void SetUp() override {
-        system("rm -rf /tmp/perf_bench_data");
-        system("mkdir -p /tmp/perf_bench_data");
+        std::string temp_dir = get_temp_dir();
+        test_dir_ = join_path(temp_dir, "perf_bench_data");
+        remove_directory(test_dir_);
+        create_directory(test_dir_);
     }
 
     void TearDown() override {
-        system("rm -rf /tmp/perf_bench_data");
+        remove_directory(test_dir_);
     }
+    
+    std::string test_dir_;
 
     // Helper: Calculate percentile from sorted vector
     double percentile(const std::vector<double>& sorted_values, double p) {
@@ -73,8 +78,8 @@ protected:
 // ============================================================================
 TEST_F(PerformanceBenchmark, SingleTagWriteThroughput) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);
@@ -117,8 +122,8 @@ TEST_F(PerformanceBenchmark, SingleTagWriteThroughput) {
 // ============================================================================
 TEST_F(PerformanceBenchmark, MultiTagWriteThroughput) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);
@@ -164,8 +169,8 @@ TEST_F(PerformanceBenchmark, MultiTagWriteThroughput) {
 // ============================================================================
 TEST_F(PerformanceBenchmark, HighVolumeWriteStress) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);
@@ -222,8 +227,8 @@ TEST_F(PerformanceBenchmark, HighVolumeWriteStress) {
 // ============================================================================
 TEST_F(PerformanceBenchmark, QueryPerformanceSmall) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);
@@ -285,8 +290,8 @@ TEST_F(PerformanceBenchmark, QueryPerformanceSmall) {
 // ============================================================================
 TEST_F(PerformanceBenchmark, QueryPerformanceLarge) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);
@@ -352,8 +357,8 @@ TEST_F(PerformanceBenchmark, QueryPerformanceLarge) {
 // ============================================================================
 TEST_F(PerformanceBenchmark, MixedReadWriteWorkload) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);
@@ -446,8 +451,8 @@ TEST_F(PerformanceBenchmark, MixedReadWriteWorkload) {
 // ============================================================================
 TEST_F(PerformanceBenchmark, BurstWritePerformance) {
     EngineConfig config;
-    config.data_dir = "/tmp/perf_bench_data";
-    config.db_path = "/tmp/perf_bench_data/meta.db";
+    config.data_dir = test_dir_;
+    config.db_path = join_path(test_dir_, "meta.db");
 
     StorageEngine engine(config);
     ASSERT_EQ(engine.open(), EngineResult::SUCCESS);

@@ -1,9 +1,9 @@
 #include "xTdb/rotating_wal.h"
 #include "xTdb/constants.h"
+#include "xTdb/platform_compat.h"
 #include <cassert>
 #include <cstring>
 #include <algorithm>
-#include <sys/stat.h>
 #include <iostream>
 
 namespace xtdb {

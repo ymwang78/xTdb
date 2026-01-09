@@ -1,8 +1,5 @@
 #include "xTdb/file_container.h"
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <fcntl.h>
+#include "xTdb/platform_compat.h"
 #include <cstring>
 #include <iostream>
 

@@ -5,8 +5,9 @@
 #include "xTdb/directory_builder.h"
 #include "xTdb/chunk_sealer.h"
 #include "xTdb/state_mutator.h"
+#include "xTdb/platform_compat.h"
+#include "test_utils.h"
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 using namespace xtdb;
 
@@ -17,11 +18,12 @@ using namespace xtdb;
 class EndToEndTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_file_ = "/tmp/xtdb_e2e_test.dat";
-        test_db_ = "/tmp/xtdb_e2e_test.db";
+        std::string temp_dir = get_temp_dir();
+        test_file_ = join_path(temp_dir, "xtdb_e2e_test.dat");
+        test_db_ = join_path(temp_dir, "xtdb_e2e_test.db");
 
-        ::unlink(test_file_.c_str());
-        ::unlink(test_db_.c_str());
+        unlink_file(test_file_);
+        unlink_file(test_db_);
 
         // Open file
         io_ = std::make_unique<AlignedIO>();
@@ -43,8 +45,8 @@ protected:
     void TearDown() override {
         mutator_.reset();
         io_.reset();
-        ::unlink(test_file_.c_str());
-        ::unlink(test_db_.c_str());
+        unlink_file(test_file_);
+        unlink_file(test_db_);
     }
 
     std::string test_file_;

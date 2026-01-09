@@ -1,7 +1,8 @@
 #include "xTdb/aligned_io.h"
+#include "xTdb/platform_compat.h"
+#include "test_utils.h"
 #include <gtest/gtest.h>
 #include <cstring>
-#include <unistd.h>
 
 using namespace xtdb;
 
@@ -12,13 +13,14 @@ using namespace xtdb;
 class AlignmentTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_file_ = "/tmp/xtdb_alignment_test.dat";
+        std::string temp_dir = get_temp_dir();
+        test_file_ = join_path(temp_dir, "xtdb_alignment_test.dat");
         // Remove test file if exists
-        ::unlink(test_file_.c_str());
+        unlink_file(test_file_);
     }
 
     void TearDown() override {
-        ::unlink(test_file_.c_str());
+        unlink_file(test_file_);
     }
 
     std::string test_file_;

@@ -1,7 +1,7 @@
 #include "xTdb/container.h"
 #include "xTdb/file_container.h"
 #include "xTdb/block_device_container.h"
-#include <sys/stat.h>
+#include "xTdb/platform_compat.h"
 #include <iostream>
 
 namespace xtdb {

@@ -4,6 +4,7 @@
 #include "xTdb/aligned_io.h"
 #include "xTdb/layout_calculator.h"
 #include "xTdb/directory_builder.h"
+#include "test_utils.h"
 #include <filesystem>
 #include <cmath>
 
@@ -13,7 +14,8 @@ namespace fs = std::filesystem;
 class CompressionE2ETest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_file_ = "/tmp/xtdb_compression_test.dat";
+        std::string temp_dir = get_temp_dir();
+        test_file_ = join_path(temp_dir, "xtdb_compression_test.dat");
 
         // Clean up any existing test file
         if (fs::exists(test_file_)) {

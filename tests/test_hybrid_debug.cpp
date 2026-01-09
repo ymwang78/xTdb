@@ -1,15 +1,20 @@
 #include <iostream>
 #include "xTdb/storage_engine.h"
 #include "xTdb/raw_scanner.h"
+#include "test_utils.h"
 
 using namespace xtdb;
 
 int main() {
-    system("rm -rf /tmp/xtdb_hybrid_debug && mkdir -p /tmp/xtdb_hybrid_debug");
+    std::string temp_dir = get_temp_dir();
+    std::string test_dir = join_path(temp_dir, "xtdb_hybrid_debug");
+    
+    remove_directory(test_dir);
+    create_directory(test_dir);
 
     EngineConfig config;
-    config.data_dir = "/tmp/xtdb_hybrid_debug";
-    config.db_path = "/tmp/xtdb_hybrid_debug/meta.db";
+    config.data_dir = test_dir;
+    config.db_path = join_path(test_dir, "meta.db");
     config.layout.block_size_bytes = 16384;
     config.layout.chunk_size_bytes = 4 * 1024 * 1024;
 
