@@ -21,6 +21,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
+# Windows-specific flags
+if(WIN32)
+    add_compile_definitions(
+        NOMINMAX  # Prevent Windows.h from defining max/min macros
+        WIN32_LEAN_AND_MEAN  # Exclude rarely-used stuff from Windows headers
+    )
+endif()
+
 # ============================================================================
 # Platform Detection
 # ============================================================================
@@ -145,8 +153,7 @@ if(BUILD_TESTS)
     enable_testing()
 
     # Find Google Test
-    find_package(GTest REQUIRED)
-    include_directories(${GTEST_INCLUDE_DIRS})
+    find_package(GTest CONFIG REQUIRED)
 
     # Test: Alignment
     add_executable(test_alignment
@@ -154,8 +161,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_alignment
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME AlignmentTest COMMAND test_alignment)
@@ -166,8 +173,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_layout
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME LayoutTest COMMAND test_layout)
@@ -178,8 +185,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_struct_size
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME StructSizeTest COMMAND test_struct_size)
@@ -190,8 +197,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_state_machine
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME StateMachineTest COMMAND test_state_machine)
@@ -202,8 +209,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_write_path
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME WritePathTest COMMAND test_write_path)
@@ -214,8 +221,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_seal_directory
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME SealDirectoryTest COMMAND test_seal_directory)
@@ -226,8 +233,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_read_recovery
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME ReadRecoveryTest COMMAND test_read_recovery)
@@ -238,8 +245,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_end_to_end
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME EndToEndTest COMMAND test_end_to_end)
@@ -250,8 +257,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_restart_consistency
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME RestartConsistencyTest COMMAND test_restart_consistency)
@@ -262,8 +269,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_write_coordinator
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME WriteCoordinatorTest COMMAND test_write_coordinator)
@@ -274,8 +281,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_read_coordinator
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME ReadCoordinatorTest COMMAND test_read_coordinator)
@@ -295,8 +302,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_maintenance
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME MaintenanceServiceTest COMMAND test_maintenance)
@@ -307,8 +314,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_swinging_door
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME SwingingDoorTest COMMAND test_swinging_door)
@@ -319,8 +326,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_compression_e2e
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME CompressionE2ETest COMMAND test_compression_e2e)
@@ -331,8 +338,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_quantized_16
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME Quantized16Test COMMAND test_quantized_16)
@@ -343,8 +350,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_resampling
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME ResamplingTest COMMAND test_resampling)
@@ -355,8 +362,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_small_chunk
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME ArchiveManagerTest COMMAND test_small_chunk)
@@ -367,8 +374,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_compression_integration
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME CompressionIntegrationTest COMMAND test_compression_integration)
@@ -379,8 +386,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_multi_resolution_query
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME MultiResolutionQueryTest COMMAND test_multi_resolution_query)
@@ -391,8 +398,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_performance_benchmark
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME PerformanceBenchmarkTest COMMAND test_performance_benchmark)
@@ -403,8 +410,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_crash_recovery
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME CrashRecoveryTest COMMAND test_crash_recovery)
@@ -415,8 +422,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_large_scale_simulation
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME LargeScaleSimulationTest COMMAND test_large_scale_simulation)
@@ -437,8 +444,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_container_abstraction
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME ContainerAbstractionTest COMMAND test_container_abstraction)
@@ -449,8 +456,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_block_device_integration
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME BlockDeviceIntegrationTest COMMAND test_block_device_integration)
@@ -461,8 +468,8 @@ if(BUILD_TESTS)
     )
     target_link_libraries(test_block_device_advanced
         xtdb_core
-        GTest::GTest
-        GTest::Main
+        GTest::gtest
+        GTest::gtest_main
         ${THREAD_LIB}
     )
     add_test(NAME BlockDeviceAdvancedTest COMMAND test_block_device_advanced)

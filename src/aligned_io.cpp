@@ -73,7 +73,11 @@ IOResult AlignedIO::open(const std::string& path,
 
 void AlignedIO::close() {
     if (fd_ >= 0) {
+#ifdef _WIN32
+        ::_close(fd_);
+#else
         ::close(fd_);
+#endif
         fd_ = -1;
     }
 }

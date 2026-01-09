@@ -3,11 +3,22 @@
 
 #ifdef _WIN32
     // Windows includes
+    #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <windows.h>
     #include <io.h>
     #include <fcntl.h>
     #include <sys/stat.h>
-    #include <windows.h>
     #include <direct.h>
+    
+    // Prevent Windows.h macros from interfering with C++ std library
+    #ifdef max
+    #undef max
+    #endif
+    #ifdef min
+    #undef min
+    #endif
     
     // Windows-specific defines
     #define unlink _unlink
@@ -40,6 +51,13 @@
     
     // Path separator
     #define PATH_SEPARATOR "\\"
+    
+    // ssize_t is not defined on Windows
+    #ifndef _SSIZE_T_DEFINED
+    #include <basetsd.h>
+    typedef SSIZE_T ssize_t;
+    #define _SSIZE_T_DEFINED
+    #endif
     
 #else
     // Unix/Linux includes

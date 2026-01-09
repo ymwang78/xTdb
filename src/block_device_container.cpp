@@ -2,6 +2,10 @@
 #include "xTdb/platform_compat.h"
 #include <cstring>
 #include <iostream>
+// Include chrono after platform_compat.h to avoid Windows.h macro conflicts
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 #ifdef __linux__
 #include <linux/fs.h>
@@ -36,21 +40,37 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         return ContainerResult::ERROR_ALREADY_OPEN;
     }
 
+    // On Windows, allow using regular files to simulate block devices
+#ifdef _WIN32
+    // Windows doesn't support real block devices, so use test mode
+    bool is_block_dev = false;
+    bool effective_test_mode = true;  // Always use test mode on Windows
+#else
     // Verify device is a block device (skip check in test mode)
     bool is_block_dev = isBlockDevice(device_path_);
     if (!is_block_dev && !test_mode_) {
         setError("Not a block device: " + device_path_);
         return ContainerResult::ERROR_DEVICE_NOT_FOUND;
     }
+    bool effective_test_mode = test_mode_;
+#endif
 
     // Open device
     int flags = read_only_ ? O_RDONLY : O_RDWR;
     // Use O_DIRECT only for real block devices (not in test mode with regular files)
-    if (is_block_dev && !test_mode_) {
+    // On Windows, never use O_DIRECT as it's not supported with regular files
+#ifndef _WIN32
+    if (is_block_dev && !effective_test_mode) {
         flags |= O_DIRECT;
     }
+#endif
 
+#ifdef _WIN32
+    int mode = _S_IREAD | (read_only_ ? 0 : _S_IWRITE);
+    fd_ = ::_open(device_path_.c_str(), flags, mode);
+#else
     fd_ = ::open(device_path_.c_str(), flags);
+#endif
     if (fd_ < 0) {
         setError("Failed to open block device: " + device_path_ + " (errno=" + std::to_string(errno) + ")");
         if (errno == EACCES || errno == EPERM) {
@@ -62,17 +82,27 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
     // Detect device properties
     ContainerResult result = detectDeviceProperties();
     if (result != ContainerResult::SUCCESS) {
-        ::close(fd_);
+        ::_close(fd_);
         fd_ = -1;
         return result;
     }
 
     // Try to read existing header
     AlignedBuffer header_buf(kExtentSizeBytes);
+#ifdef _WIN32
+    if (::_lseek(fd_, 0, SEEK_SET) == -1) {
+        setError("Failed to seek device header: " + std::string(strerror(errno)));
+        ::_close(fd_);
+        fd_ = -1;
+        return ContainerResult::ERROR_READ_FAILED;
+    }
+    ssize_t bytes_read = ::_read(fd_, header_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
+#else
     ssize_t bytes_read = ::pread(fd_, header_buf.data(), kExtentSizeBytes, 0);
+#endif
     if (bytes_read < 0) {
         setError("Failed to read device header: " + std::string(strerror(errno)));
-        ::close(fd_);
+        ::_close(fd_);
         fd_ = -1;
         return ContainerResult::ERROR_READ_FAILED;
     }
@@ -87,7 +117,7 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         // Valid header exists - read and validate
         result = readAndValidateHeader();
         if (result != ContainerResult::SUCCESS) {
-            ::close(fd_);
+            ::_close(fd_);
             fd_ = -1;
             return result;
         }
@@ -96,13 +126,13 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         if (create_if_not_exists && !read_only_) {
             result = initializeNewContainer();
             if (result != ContainerResult::SUCCESS) {
-                ::close(fd_);
+                ::_close(fd_);
                 fd_ = -1;
                 return result;
             }
         } else {
             setError("Device has no valid container header");
-            ::close(fd_);
+            ::_close(fd_);
             fd_ = -1;
             return ContainerResult::ERROR_INVALID_HEADER;
         }
@@ -111,11 +141,16 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
     // Create AlignedIO instance for StorageEngine compatibility
     io_ = std::make_unique<AlignedIO>();
     // Use O_DIRECT only for real block devices (not in test mode)
-    bool use_direct_io = (is_block_dev && !test_mode_);
-    IOResult io_result = io_->open(device_path_, read_only_, use_direct_io);
+    // On Windows, never use direct I/O with regular files
+#ifndef _WIN32
+    bool use_direct_io = (is_block_dev && !effective_test_mode);
+#else
+    bool use_direct_io = false;  // Windows doesn't support O_DIRECT with regular files
+#endif
+    IOResult io_result = io_->open(device_path_, create_if_not_exists, use_direct_io);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to open AlignedIO for device: " + io_->getLastError());
-        ::close(fd_);
+        ::_close(fd_);
         fd_ = -1;
         io_.reset();
         return ContainerResult::ERROR_OPEN_FAILED;
@@ -139,8 +174,12 @@ void BlockDeviceContainer::close() {
     }
 
     if (fd_ >= 0) {
+#ifdef _WIN32
+        ::_commit(fd_);  // Ensure all data is flushed
+#else
         ::fsync(fd_);  // Ensure all data is flushed
-        ::close(fd_);
+#endif
+        ::_close(fd_);
         fd_ = -1;
     }
 
@@ -188,7 +227,15 @@ ContainerResult BlockDeviceContainer::write(const void* buffer, uint64_t size, u
     }
 
     // Perform write
+#ifdef _WIN32
+    if (::_lseek(fd_, offset, SEEK_SET) == -1) {
+        setError("Failed to seek: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_WRITE_FAILED;
+    }
+    ssize_t bytes_written = ::_write(fd_, buffer, static_cast<unsigned int>(size));
+#else
     ssize_t bytes_written = ::pwrite(fd_, buffer, size, offset);
+#endif
     if (bytes_written < 0 || static_cast<uint64_t>(bytes_written) != size) {
         setError("Write failed: " + std::string(strerror(errno)));
         return ContainerResult::ERROR_WRITE_FAILED;
@@ -232,7 +279,15 @@ ContainerResult BlockDeviceContainer::read(void* buffer, uint64_t size, uint64_t
     }
 
     // Perform read
+#ifdef _WIN32
+    if (::_lseek(fd_, offset, SEEK_SET) == -1) {
+        setError("Failed to seek: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_READ_FAILED;
+    }
+    ssize_t bytes_read = ::_read(fd_, buffer, static_cast<unsigned int>(size));
+#else
     ssize_t bytes_read = ::pread(fd_, buffer, size, offset);
+#endif
     if (bytes_read < 0 || static_cast<uint64_t>(bytes_read) != size) {
         setError("Read failed: " + std::string(strerror(errno)));
         return ContainerResult::ERROR_READ_FAILED;
@@ -279,7 +334,13 @@ bool BlockDeviceContainer::isBlockDevice(const std::string& device_path) {
         return false;
     }
 
+#ifdef _WIN32
+    // On Windows, block devices are not supported in the same way
+    (void)device_path;
+    return false;
+#else
     return S_ISBLK(st.st_mode);
+#endif
 }
 
 ContainerResult BlockDeviceContainer::detectDeviceProperties() {
@@ -347,15 +408,34 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
     header.raw_block_class = 1;  // RAW16K
 
     // Get current timestamp
+    // Use GetSystemTimePreciseAsFileTime on Windows to avoid chrono macro conflicts
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    ULARGE_INTEGER uli;
+    uli.LowPart = ft.dwLowDateTime;
+    uli.HighPart = ft.dwHighDateTime;
+    // Convert from 100-nanosecond intervals to microseconds
+    header.created_ts_us = uli.QuadPart / 10;
+#else
     auto now = std::chrono::system_clock::now();
     auto duration = now.time_since_epoch();
     header.created_ts_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+#endif
 
     // Write header to extent 0
     AlignedBuffer header_buf(kExtentSizeBytes);
     std::memcpy(header_buf.data(), &header, sizeof(header));
 
+#ifdef _WIN32
+    if (::_lseek(fd_, 0, SEEK_SET) == -1) {
+        setError("Failed to seek: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_CREATE_FAILED;
+    }
+    ssize_t bytes_written = ::_write(fd_, header_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
+#else
     ssize_t bytes_written = ::pwrite(fd_, header_buf.data(), kExtentSizeBytes, 0);
+#endif
     if (bytes_written < 0 || bytes_written != kExtentSizeBytes) {
         setError("Failed to write container header: " + std::string(strerror(errno)));
         return ContainerResult::ERROR_CREATE_FAILED;
@@ -365,7 +445,15 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
     AlignedBuffer zero_buf(kExtentSizeBytes);
     std::memset(zero_buf.data(), 0, kExtentSizeBytes);
     for (uint32_t i = 1; i <= 256; i++) {
+#ifdef _WIN32
+        if (::_lseek(fd_, i * kExtentSizeBytes, SEEK_SET) == -1) {
+            setError("Failed to seek: " + std::string(strerror(errno)));
+            return ContainerResult::ERROR_CREATE_FAILED;
+        }
+        bytes_written = ::_write(fd_, zero_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
+#else
         bytes_written = ::pwrite(fd_, zero_buf.data(), kExtentSizeBytes, i * kExtentSizeBytes);
+#endif
         if (bytes_written < 0 || bytes_written != kExtentSizeBytes) {
             setError("Failed to initialize WAL region: " + std::string(strerror(errno)));
             return ContainerResult::ERROR_CREATE_FAILED;
@@ -373,7 +461,11 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
     }
 
     // Sync to ensure metadata is written
+#ifdef _WIN32
+    ::_commit(fd_);
+#else
     ::fsync(fd_);
+#endif
 
     // Store metadata
     std::memset(metadata_.db_instance_id, 0, 16);
@@ -392,7 +484,15 @@ ContainerResult BlockDeviceContainer::initializeNewContainer() {
 ContainerResult BlockDeviceContainer::readAndValidateHeader() {
     // Read header from extent 0
     AlignedBuffer header_buf(kExtentSizeBytes);
+#ifdef _WIN32
+    if (::_lseek(fd_, 0, SEEK_SET) == -1) {
+        setError("Failed to seek: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_INVALID_HEADER;
+    }
+    ssize_t bytes_read = ::_read(fd_, header_buf.data(), static_cast<unsigned int>(kExtentSizeBytes));
+#else
     ssize_t bytes_read = ::pread(fd_, header_buf.data(), kExtentSizeBytes, 0);
+#endif
     if (bytes_read < 0 || bytes_read != kExtentSizeBytes) {
         setError("Failed to read container header: " + std::string(strerror(errno)));
         return ContainerResult::ERROR_INVALID_HEADER;
