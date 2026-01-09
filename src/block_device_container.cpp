@@ -15,10 +15,12 @@ namespace xtdb {
 
 BlockDeviceContainer::BlockDeviceContainer(const std::string& device_path,
                                            const ChunkLayout& layout,
-                                           bool read_only)
+                                           bool read_only,
+                                           bool test_mode)
     : device_path_(device_path),
       layout_(layout),
       read_only_(read_only),
+      test_mode_(test_mode),
       is_open_(false),
       fd_(-1),
       device_capacity_(0),
@@ -37,15 +39,19 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
         return ContainerResult::ERROR_ALREADY_OPEN;
     }
 
-    // Verify device is a block device
-    if (!isBlockDevice(device_path_)) {
+    // Verify device is a block device (skip check in test mode)
+    bool is_block_dev = isBlockDevice(device_path_);
+    if (!is_block_dev && !test_mode_) {
         setError("Not a block device: " + device_path_);
         return ContainerResult::ERROR_DEVICE_NOT_FOUND;
     }
 
     // Open device
     int flags = read_only_ ? O_RDONLY : O_RDWR;
-    flags |= O_DIRECT;  // Always use direct I/O for block devices
+    // Use O_DIRECT only for real block devices (not in test mode with regular files)
+    if (is_block_dev && !test_mode_) {
+        flags |= O_DIRECT;
+    }
 
     fd_ = ::open(device_path_.c_str(), flags);
     if (fd_ < 0) {
@@ -107,7 +113,9 @@ ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
 
     // Create AlignedIO instance for StorageEngine compatibility
     io_ = std::make_unique<AlignedIO>();
-    IOResult io_result = io_->open(device_path_, read_only_, true);  // Always use O_DIRECT for block devices
+    // Use O_DIRECT only for real block devices (not in test mode)
+    bool use_direct_io = (is_block_dev && !test_mode_);
+    IOResult io_result = io_->open(device_path_, read_only_, use_direct_io);
     if (io_result != IOResult::SUCCESS) {
         setError("Failed to open AlignedIO for device: " + io_->getLastError());
         ::close(fd_);
@@ -279,23 +287,38 @@ bool BlockDeviceContainer::isBlockDevice(const std::string& device_path) {
 
 ContainerResult BlockDeviceContainer::detectDeviceProperties() {
 #ifdef __linux__
-    // Get device size using BLKGETSIZE64
     uint64_t size_bytes = 0;
-    if (ioctl(fd_, BLKGETSIZE64, &size_bytes) < 0) {
-        setError("Failed to get device size: " + std::string(strerror(errno)));
-        return ContainerResult::ERROR_DEVICE_NOT_FOUND;
-    }
-    device_capacity_ = size_bytes;
 
-    // Get device block size
-    int block_size = 0;
-    if (ioctl(fd_, BLKSSZGET, &block_size) < 0) {
-        // If failed, use default 4KB
-        std::cerr << "[BlockDeviceContainer] Warning: Failed to get block size, using default 4KB" << std::endl;
-        device_block_size_ = 4096;
+    if (test_mode_) {
+        // Test mode: Get file size using fstat
+        struct stat st;
+        if (fstat(fd_, &st) < 0) {
+            setError("Failed to get file size: " + std::string(strerror(errno)));
+            return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+        }
+        size_bytes = st.st_size;
+        device_block_size_ = 4096;  // Use default 4KB for regular files
+        std::cout << "[BlockDeviceContainer] Test mode: Using regular file, size="
+                  << size_bytes << " bytes" << std::endl;
     } else {
-        device_block_size_ = block_size;
+        // Production mode: Get device size using BLKGETSIZE64
+        if (ioctl(fd_, BLKGETSIZE64, &size_bytes) < 0) {
+            setError("Failed to get device size: " + std::string(strerror(errno)));
+            return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+        }
+
+        // Get device block size
+        int block_size = 0;
+        if (ioctl(fd_, BLKSSZGET, &block_size) < 0) {
+            // If failed, use default 4KB
+            std::cerr << "[BlockDeviceContainer] Warning: Failed to get block size, using default 4KB" << std::endl;
+            device_block_size_ = 4096;
+        } else {
+            device_block_size_ = block_size;
+        }
     }
+
+    device_capacity_ = size_bytes;
 
     // Verify device capacity is sufficient
     uint64_t min_capacity = layout_.chunk_size_bytes;  // At least 1 chunk

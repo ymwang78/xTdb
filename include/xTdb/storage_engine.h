@@ -77,6 +77,7 @@ struct EngineConfig {
     int rollover_time_hours;                // Time interval for TIME_BASED rollover
     std::string container_name_pattern;     // Naming pattern (e.g., "container_{date}.raw")
     std::string block_device_path;          // Block device path (for BLOCK_DEVICE type)
+    bool block_device_test_mode;            // Test mode for block device (allow regular files)
     bool direct_io;                         // Enable O_DIRECT for file containers
 
     EngineConfig()
@@ -89,6 +90,7 @@ struct EngineConfig {
           rollover_time_hours(24),
           container_name_pattern("container_{index}.raw"),
           block_device_path(""),
+          block_device_test_mode(false),
           direct_io(false) {
         // Default layout: 16KB blocks, 256MB chunk
         layout.block_size_bytes = 16384;

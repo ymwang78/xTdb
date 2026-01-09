@@ -191,6 +191,7 @@ struct ContainerConfig {
     bool create_if_not_exists;           // Create if doesn't exist
     bool direct_io;                      // Enable O_DIRECT (bypass page cache)
     bool read_only;                      // Open in read-only mode
+    bool test_mode;                      // Test mode for block device (allow regular files)
     uint64_t preallocate_size;           // Preallocate size (0 = no preallocation)
     RolloverStrategy rollover_strategy;  // Rollover strategy (file-based only)
 
@@ -200,6 +201,7 @@ struct ContainerConfig {
           create_if_not_exists(true),
           direct_io(false),
           read_only(false),
+          test_mode(false),
           preallocate_size(0),
           rollover_strategy(RolloverStrategy::NONE) {
         // Default layout: 16KB blocks, 256MB chunks

@@ -203,6 +203,7 @@ EngineResult StorageEngine::mountContainers() {
     container_config.create_if_not_exists = true;
     container_config.direct_io = config_.direct_io;
     container_config.read_only = false;
+    container_config.test_mode = config_.block_device_test_mode;
 
     // Set container path based on type
     if (config_.container_type == ContainerType::BLOCK_DEVICE) {

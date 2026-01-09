@@ -21,9 +21,11 @@ public:
     /// @param device_path Block device path (e.g., /dev/sdb1)
     /// @param layout Chunk layout configuration
     /// @param read_only Open in read-only mode
+    /// @param test_mode Allow using regular files for testing (bypasses block device check)
     BlockDeviceContainer(const std::string& device_path,
                          const ChunkLayout& layout,
-                         bool read_only = false);
+                         bool read_only = false,
+                         bool test_mode = false);
 
     /// Destructor
     ~BlockDeviceContainer() override;
@@ -104,6 +106,7 @@ private:
     std::string device_path_;                   // Block device path
     ChunkLayout layout_;                        // Chunk layout configuration
     bool read_only_;                            // Read-only mode
+    bool test_mode_;                            // Test mode (allow regular files)
     bool is_open_;                              // Open state
 
     std::unique_ptr<AlignedIO> io_;             // Aligned I/O handler (for StorageEngine compatibility)

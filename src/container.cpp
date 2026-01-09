@@ -53,7 +53,8 @@ std::unique_ptr<IContainer> ContainerFactory::create(const ContainerConfig& conf
             auto container = std::make_unique<BlockDeviceContainer>(
                 config.path,
                 config.layout,
-                config.read_only
+                config.read_only,
+                config.test_mode
             );
 
             // Open container
