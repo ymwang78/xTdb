@@ -1,6 +1,8 @@
 #include "xTdb/storage_engine.h"
 #include "xTdb/constants.h"
 #include "xTdb/layout_calculator.h"
+#include "xTdb/file_container.h"
+#include "xTdb/block_device_container.h"
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -16,8 +18,8 @@
 namespace xtdb {
 
 StorageEngine::StorageEngine(const EngineConfig& config)
-    : config_(config), is_open_(false), next_io_index_(0), wal_flush_running_(false),
-      wal_entries_since_sync_(0) {
+    : config_(config), is_open_(false), io_(nullptr), next_io_index_(0),
+      wal_flush_running_(false), wal_entries_since_sync_(0) {
     // If layout not specified by user, calculate default layout based on RAW_16K
     if (config_.layout.block_size_bytes == 0 || config_.layout.chunk_size_bytes == 0) {
         config_.layout = LayoutCalculator::calculateLayout(RawBlockClass::RAW_16K);
@@ -64,7 +66,14 @@ EngineResult StorageEngine::open() {
 
     // Create per-thread I/O instances for parallel flush
     // Each thread needs its own file descriptor for parallel writes
-    std::string container_path = config_.data_dir + "/container_0.raw";
+    // Get container path from the writable container
+    IContainer* writable_container = container_manager_->getWritableContainer();
+    if (!writable_container) {
+        setError("No writable container available for thread pool");
+        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+    }
+    std::string container_path = writable_container->getIdentifier();
+
     io_pool_.reserve(num_threads);
     for (size_t i = 0; i < num_threads; ++i) {
         auto thread_io = std::make_unique<AlignedIO>();
@@ -136,10 +145,21 @@ void StorageEngine::close() {
         metadata_.reset();
     }
 
-    // Close I/O
-    if (io_) {
-        io_->close();
-        io_.reset();
+    // Clear io_ pointer (it's borrowed from container, don't close/delete)
+    io_ = nullptr;
+
+    // Close per-thread I/O pool
+    for (auto& thread_io : io_pool_) {
+        if (thread_io) {
+            thread_io->close();
+        }
+    }
+    io_pool_.clear();
+
+    // Close ContainerManager (this closes all containers)
+    if (container_manager_) {
+        container_manager_->close();
+        container_manager_.reset();
     }
 
     containers_.clear();
@@ -169,118 +189,91 @@ EngineResult StorageEngine::connectMetadata() {
 }
 
 EngineResult StorageEngine::mountContainers() {
-    // For this phase, we create a single container file
-    std::string container_path = config_.data_dir + "/container_0.raw";
+    // Build ContainerManager configuration from EngineConfig
+    ManagerConfig manager_config;
+    manager_config.rollover_strategy = config_.rollover_strategy;
+    manager_config.rollover_size_bytes = config_.rollover_size_bytes;
+    manager_config.rollover_time_hours = config_.rollover_time_hours;
+    manager_config.name_pattern = config_.container_name_pattern;
 
-    // Check if container exists
-    struct stat st;
-    bool exists = (stat(container_path.c_str(), &st) == 0);
+    // Create container configuration
+    ContainerConfig container_config;
+    container_config.type = config_.container_type;
+    container_config.layout = config_.layout;
+    container_config.create_if_not_exists = true;
+    container_config.direct_io = config_.direct_io;
+    container_config.read_only = false;
 
-    if (!exists) {
-        // Create new container file
-        // Initialize I/O
-        io_ = std::make_unique<AlignedIO>();
-        IOResult io_result = io_->open(container_path, true, false);  // Create new, read/write
-        if (io_result != IOResult::SUCCESS) {
-            setError("Failed to create container: " + io_->getLastError());
+    // Set container path based on type
+    if (config_.container_type == ContainerType::BLOCK_DEVICE) {
+        // Use block device path
+        if (config_.block_device_path.empty()) {
+            setError("Block device path not specified");
             return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
         }
-
-        // Initialize container header using constructor
-        ContainerHeaderV12 header;
-        // Constructor already sets magic, version, header_size
-        header.capacity_extents = (config_.layout.chunk_size_bytes * 16) / kExtentSizeBytes;  // 16 chunks
-        header.chunk_size_extents = config_.layout.chunk_size_bytes / kExtentSizeBytes;
-        header.block_size_extents = config_.layout.block_size_bytes / kExtentSizeBytes;
-        header.layout = static_cast<uint8_t>(ContainerLayout::LAYOUT_RAW_FIXED);
-        header.raw_block_class = 1;  // RAW16K
-
-        // Write header
-        AlignedBuffer header_buf(kExtentSizeBytes);
-        std::memcpy(header_buf.data(), &header, sizeof(header));
-        io_result = io_->write(header_buf.data(), kExtentSizeBytes, 0);
-        if (io_result != IOResult::SUCCESS) {
-            setError("Failed to write container header: " + io_->getLastError());
-            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+        container_config.path = config_.block_device_path;
+    } else {
+        // Use file-based path with pattern
+        container_config.path = config_.data_dir + "/" + config_.container_name_pattern;
+        // Replace {index} with 0 for initial container
+        size_t pos = container_config.path.find("{index}");
+        if (pos != std::string::npos) {
+            container_config.path.replace(pos, 7, "0");
         }
-
-        // Initialize WAL region (extent 1-256, 4 MB total)
-        // Zero-fill the WAL region so it's ready for use
-        AlignedBuffer zero_buf(kExtentSizeBytes);
-        std::memset(zero_buf.data(), 0, kExtentSizeBytes);
-        for (uint32_t i = 1; i <= 256; i++) {
-            io_result = io_->write(zero_buf.data(), kExtentSizeBytes, i * kExtentSizeBytes);
-            if (io_result != IOResult::SUCCESS) {
-                setError("Failed to initialize WAL region: " + io_->getLastError());
-                return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
-            }
-        }
-
-        // Pre-allocate container space for better performance
-        // This ensures the entire container capacity is allocated upfront
-        uint64_t container_capacity = header.capacity_extents * kExtentSizeBytes;
-        int fd = io_->getFd();
-        if (fd >= 0) {
-#ifdef __linux__
-            // Use fallocate on Linux for efficient space allocation
-            int fallocate_result = fallocate(fd, 0, 0, container_capacity);
-            if (fallocate_result != 0) {
-                // fallocate failed, try fallback method
-                std::cerr << "[StorageEngine] Warning: fallocate failed (errno=" << errno
-                          << "), using fallback pre-allocation method" << std::endl;
-                // Fallback: write a single byte at the end to extend file
-                AlignedBuffer end_buf(kExtentSizeBytes);
-                std::memset(end_buf.data(), 0, kExtentSizeBytes);
-                io_result = io_->write(end_buf.data(), kExtentSizeBytes,
-                                      container_capacity - kExtentSizeBytes);
-                if (io_result != IOResult::SUCCESS) {
-                    std::cerr << "[StorageEngine] Warning: Container pre-allocation failed, "
-                              << "continuing without pre-allocation" << std::endl;
-                }
-            }
-#else
-            // Non-Linux: use fallback method (write at end)
-            AlignedBuffer end_buf(kExtentSizeBytes);
-            std::memset(end_buf.data(), 0, kExtentSizeBytes);
-            io_result = io_->write(end_buf.data(), kExtentSizeBytes,
-                                  container_capacity - kExtentSizeBytes);
-            if (io_result != IOResult::SUCCESS) {
-                std::cerr << "[StorageEngine] Warning: Container pre-allocation failed, "
-                          << "continuing without pre-allocation" << std::endl;
-            }
-#endif
-        }
-
-        // Register container
-        ContainerInfo info;
-        info.container_id = 0;
-        info.file_path = container_path;
-        info.capacity_bytes = header.capacity_extents * kExtentSizeBytes;
-        info.layout = config_.layout;
-        containers_.push_back(info);
     }
-    else {
-        // Container exists, verify header
-        io_ = std::make_unique<AlignedIO>();
-        IOResult io_result = io_->open(container_path, false, false);  // Don't create, read/write
-        if (io_result != IOResult::SUCCESS) {
-            setError("Failed to open container: " + io_->getLastError());
+
+    // Add container to manager config
+    manager_config.containers.push_back(container_config);
+
+    // Create and initialize ContainerManager
+    container_manager_ = std::make_unique<ContainerManager>(manager_config);
+    ManagerResult mgr_result = container_manager_->initialize();
+    if (mgr_result != ManagerResult::SUCCESS) {
+        setError("Failed to initialize container manager: " + container_manager_->getLastError());
+        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+    }
+
+    // Get writable container and register it
+    IContainer* writable_container = container_manager_->getWritableContainer();
+    if (!writable_container) {
+        setError("No writable container available");
+        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+    }
+
+    // Register container info for backward compatibility
+    ContainerInfo info;
+    info.container_id = 0;
+    info.file_path = writable_container->getIdentifier();
+    info.capacity_bytes = writable_container->getCapacity();
+    info.layout = config_.layout;
+    containers_.push_back(info);
+
+    // Set up io_ pointer for backward compatibility with existing code
+    // Both container types now provide AlignedIO interface
+    if (config_.container_type == ContainerType::FILE_BASED) {
+        FileContainer* file_container = dynamic_cast<FileContainer*>(writable_container);
+        if (file_container) {
+            io_ = file_container->getIO();
+        } else {
+            setError("Failed to cast container to FileContainer");
             return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
         }
-
-        ContainerHeaderV12 header;
-        EngineResult result = verifyContainerHeader(container_path, header);
-        if (result != EngineResult::SUCCESS) {
-            return result;
+    } else if (config_.container_type == ContainerType::BLOCK_DEVICE) {
+        BlockDeviceContainer* block_container = dynamic_cast<BlockDeviceContainer*>(writable_container);
+        if (block_container) {
+            io_ = block_container->getIO();
+        } else {
+            setError("Failed to cast container to BlockDeviceContainer");
+            return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
         }
+    } else {
+        setError("Unknown container type");
+        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
+    }
 
-        // Register container
-        ContainerInfo info;
-        info.container_id = 0;
-        info.file_path = container_path;
-        info.capacity_bytes = header.capacity_extents * kExtentSizeBytes;
-        info.layout = config_.layout;
-        containers_.push_back(info);
+    if (!io_) {
+        setError("Failed to get I/O interface from container");
+        return EngineResult::ERROR_CONTAINER_OPEN_FAILED;
     }
 
     // Initialize Rotating WAL (independent container)
@@ -312,7 +305,7 @@ EngineResult StorageEngine::mountContainers() {
 
 EngineResult StorageEngine::restoreActiveState() {
     // Initialize state mutator
-    mutator_ = std::make_unique<StateMutator>(io_.get());
+    mutator_ = std::make_unique<StateMutator>(io_);
 
     // Check if we have any active chunks in SQLite
     // For now, we'll allocate a new chunk at offset kExtentSizeBytes (after container header)
@@ -347,7 +340,7 @@ EngineResult StorageEngine::restoreActiveState() {
             active_chunk_.end_ts_us = chunk_header.end_ts_us;
 
             // Count blocks by reading directory
-            RawScanner scanner(io_.get());
+            RawScanner scanner(io_);
             ScannedChunk scanned_chunk;
             ScanResult scan_result = scanner.scanChunk(active_chunk_.chunk_offset,
                                                       config_.layout,
@@ -357,7 +350,7 @@ EngineResult StorageEngine::restoreActiveState() {
             }
 
             // Create DirectoryBuilder and load existing directory from disk
-            dir_builder_ = std::make_unique<DirectoryBuilder>(io_.get(),
+            dir_builder_ = std::make_unique<DirectoryBuilder>(io_,
                                                               config_.layout,
                                                               active_chunk_.chunk_offset);
             DirBuildResult dir_result = dir_builder_->load();
@@ -581,7 +574,7 @@ EngineResult StorageEngine::allocateNewChunk(uint64_t chunk_offset) {
     }
 
     // Create DirectoryBuilder for this chunk
-    dir_builder_ = std::make_unique<DirectoryBuilder>(io_.get(),
+    dir_builder_ = std::make_unique<DirectoryBuilder>(io_,
                                                       config_.layout,
                                                       chunk_offset);
     DirBuildResult dir_result = dir_builder_->initialize();
@@ -824,7 +817,7 @@ EngineResult StorageEngine::flush() {
             // Chunk is full, need to seal and allocate new one
 
             // Seal current chunk
-            ChunkSealer sealer(io_.get(), mutator_.get());
+            ChunkSealer sealer(io_, mutator_.get());
             int64_t final_start_ts = active_chunk_.start_ts_us;
             int64_t final_end_ts = active_chunk_.end_ts_us;
 
@@ -1063,7 +1056,7 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
 
     if (blocks_used > 0) {
         // Step 2.1: Scan directory to find matching blocks
-        RawScanner scanner(io_.get());
+        RawScanner scanner(io_);
         ScannedChunk scanned_chunk;
 
         ScanResult scan_result = scanner.scanChunk(chunk_offset,
@@ -1296,7 +1289,7 @@ EngineResult StorageEngine::sealCurrentChunk() {
     }
 
     // Seal the chunk using ChunkSealer
-    ChunkSealer sealer(io_.get(), mutator_.get());
+    ChunkSealer sealer(io_, mutator_.get());
     int64_t final_start_ts = active_chunk_.start_ts_us;
     int64_t final_end_ts = active_chunk_.end_ts_us;
 
@@ -1312,7 +1305,7 @@ EngineResult StorageEngine::sealCurrentChunk() {
     write_stats_.chunks_sealed++;
 
     // Sync chunk metadata to SQLite
-    RawScanner scanner(io_.get());
+    RawScanner scanner(io_);
     ScannedChunk scanned_chunk;
     ScanResult scan_result = scanner.scanChunk(active_chunk_.chunk_offset,
                                               config_.layout,
@@ -1373,7 +1366,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
         // Chunk is full, need to seal and allocate new one
 
         // Seal current chunk
-        ChunkSealer sealer(io_.get(), mutator_.get());
+        ChunkSealer sealer(io_, mutator_.get());
         int64_t final_start_ts = active_chunk_.start_ts_us;
         int64_t final_end_ts = active_chunk_.end_ts_us;
 
@@ -1408,7 +1401,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
     }
 
     // Write block to disk using BlockWriter
-    BlockWriter writer(io_.get(), config_.layout, kExtentSizeBytes);
+    BlockWriter writer(io_, config_.layout, kExtentSizeBytes);
 
     uint32_t data_block_index = active_chunk_.blocks_used;
     uint32_t data_crc32 = 0;

@@ -56,6 +56,10 @@ add_library(xtdb_core
     src/resampling_engine.cpp
     src/archive_manager.cpp
     src/thread_pool.cpp
+    src/container.cpp
+    src/file_container.cpp
+    src/block_device_container.cpp
+    src/container_manager.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -398,8 +402,32 @@ if(BUILD_TESTS)
     )
     add_test(NAME RotatingWALTest COMMAND test_rotating_wal)
 
+    # Test: Container Abstraction (T25)
+    add_executable(test_container_abstraction
+        tests/test_container_abstraction.cpp
+    )
+    target_link_libraries(test_container_abstraction
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME ContainerAbstractionTest COMMAND test_container_abstraction)
+
+    # Test: Block Device Integration (T26)
+    add_executable(test_block_device_integration
+        tests/test_block_device_integration.cpp
+    )
+    target_link_libraries(test_block_device_integration
+        xtdb_core
+        GTest::GTest
+        GTest::Main
+        pthread
+    )
+    add_test(NAME BlockDeviceIntegrationTest COMMAND test_block_device_integration)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk, test_compression_integration, test_multi_resolution_query, test_performance_benchmark, test_crash_recovery, test_large_scale_simulation, test_rotating_wal")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk, test_compression_integration, test_multi_resolution_query, test_performance_benchmark, test_crash_recovery, test_large_scale_simulation, test_rotating_wal, test_container_abstraction, test_block_device_integration")
 endif()
 
 # ============================================================================

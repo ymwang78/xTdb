@@ -14,6 +14,8 @@
 #include "wal_reader.h"
 #include "thread_pool.h"
 #include "struct_defs.h"
+#include "container.h"
+#include "container_manager.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -68,10 +70,26 @@ struct EngineConfig {
     ChunkLayout layout;
     int64_t retention_days;  // Data retention in days (0 = no retention limit)
 
+    // Container configuration
+    ContainerType container_type;           // FILE_BASED or BLOCK_DEVICE
+    RolloverStrategy rollover_strategy;     // Container rollover strategy
+    uint64_t rollover_size_bytes;           // Size threshold for SIZE_BASED rollover
+    int rollover_time_hours;                // Time interval for TIME_BASED rollover
+    std::string container_name_pattern;     // Naming pattern (e.g., "container_{date}.raw")
+    std::string block_device_path;          // Block device path (for BLOCK_DEVICE type)
+    bool direct_io;                         // Enable O_DIRECT for file containers
+
     EngineConfig()
         : data_dir("./data"),
           db_path("./data/meta.db"),
-          retention_days(0) {  // No retention limit by default
+          retention_days(0),  // No retention limit by default
+          container_type(ContainerType::FILE_BASED),
+          rollover_strategy(RolloverStrategy::NONE),
+          rollover_size_bytes(0),
+          rollover_time_hours(24),
+          container_name_pattern("container_{index}.raw"),
+          block_device_path(""),
+          direct_io(false) {
         // Default layout: 16KB blocks, 256MB chunk
         layout.block_size_bytes = 16384;
         layout.chunk_size_bytes = 256 * 1024 * 1024;
@@ -258,7 +276,8 @@ private:
     std::string last_error_;
 
     // Core components
-    std::unique_ptr<AlignedIO> io_;              // File I/O (main thread)
+    std::unique_ptr<ContainerManager> container_manager_;  // Multi-container management
+    AlignedIO* io_;                              // Primary I/O (borrowed from container, for backward compatibility)
     std::unique_ptr<MetadataSync> metadata_;     // SQLite connection
     std::unique_ptr<StateMutator> mutator_;      // State machine
     std::unique_ptr<DirectoryBuilder> dir_builder_;  // Active chunk directory
@@ -267,7 +286,7 @@ private:
 
     // Parallel execution infrastructure (Phase 2)
     std::unique_ptr<ThreadPool> flush_pool_;     // Thread pool for parallel flush
-    std::vector<std::unique_ptr<AlignedIO>> io_pool_;  // Per-thread I/O instances
+    std::vector<std::unique_ptr<AlignedIO>> io_pool_;  // Per-thread I/O instances for parallel access
     mutable std::shared_mutex buffers_mutex_;    // Reader-writer lock for buffers_
     std::mutex active_chunk_mutex_;              // Protect active_chunk_ updates
     std::atomic<size_t> next_io_index_;          // Round-robin I/O allocation

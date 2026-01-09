@@ -1,0 +1,415 @@
+#include "xTdb/block_device_container.h"
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <cstring>
+#include <iostream>
+
+#ifdef __linux__
+#include <linux/fs.h>
+#include <sys/ioctl.h>
+#endif
+
+namespace xtdb {
+
+BlockDeviceContainer::BlockDeviceContainer(const std::string& device_path,
+                                           const ChunkLayout& layout,
+                                           bool read_only)
+    : device_path_(device_path),
+      layout_(layout),
+      read_only_(read_only),
+      is_open_(false),
+      fd_(-1),
+      device_capacity_(0),
+      device_block_size_(4096) {  // Default 4KB block size
+}
+
+BlockDeviceContainer::~BlockDeviceContainer() {
+    close();
+}
+
+ContainerResult BlockDeviceContainer::open(bool create_if_not_exists) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (is_open_) {
+        setError("Container already open");
+        return ContainerResult::ERROR_ALREADY_OPEN;
+    }
+
+    // Verify device is a block device
+    if (!isBlockDevice(device_path_)) {
+        setError("Not a block device: " + device_path_);
+        return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+    }
+
+    // Open device
+    int flags = read_only_ ? O_RDONLY : O_RDWR;
+    flags |= O_DIRECT;  // Always use direct I/O for block devices
+
+    fd_ = ::open(device_path_.c_str(), flags);
+    if (fd_ < 0) {
+        setError("Failed to open block device: " + device_path_ + " (errno=" + std::to_string(errno) + ")");
+        if (errno == EACCES || errno == EPERM) {
+            return ContainerResult::ERROR_INSUFFICIENT_PERMISSIONS;
+        }
+        return ContainerResult::ERROR_OPEN_FAILED;
+    }
+
+    // Detect device properties
+    ContainerResult result = detectDeviceProperties();
+    if (result != ContainerResult::SUCCESS) {
+        ::close(fd_);
+        fd_ = -1;
+        return result;
+    }
+
+    // Try to read existing header
+    AlignedBuffer header_buf(kExtentSizeBytes);
+    ssize_t bytes_read = ::pread(fd_, header_buf.data(), kExtentSizeBytes, 0);
+    if (bytes_read < 0) {
+        setError("Failed to read device header: " + std::string(strerror(errno)));
+        ::close(fd_);
+        fd_ = -1;
+        return ContainerResult::ERROR_READ_FAILED;
+    }
+
+    // Check if header is valid
+    ContainerHeaderV12 header;
+    std::memcpy(&header, header_buf.data(), sizeof(header));
+
+    bool has_valid_header = (std::memcmp(header.magic, kContainerMagic, 8) == 0);
+
+    if (has_valid_header) {
+        // Valid header exists - read and validate
+        result = readAndValidateHeader();
+        if (result != ContainerResult::SUCCESS) {
+            ::close(fd_);
+            fd_ = -1;
+            return result;
+        }
+    } else {
+        // No valid header - initialize if allowed
+        if (create_if_not_exists && !read_only_) {
+            result = initializeNewContainer();
+            if (result != ContainerResult::SUCCESS) {
+                ::close(fd_);
+                fd_ = -1;
+                return result;
+            }
+        } else {
+            setError("Device has no valid container header");
+            ::close(fd_);
+            fd_ = -1;
+            return ContainerResult::ERROR_INVALID_HEADER;
+        }
+    }
+
+    // Create AlignedIO instance for StorageEngine compatibility
+    io_ = std::make_unique<AlignedIO>();
+    IOResult io_result = io_->open(device_path_, read_only_, true);  // Always use O_DIRECT for block devices
+    if (io_result != IOResult::SUCCESS) {
+        setError("Failed to open AlignedIO for device: " + io_->getLastError());
+        ::close(fd_);
+        fd_ = -1;
+        io_.reset();
+        return ContainerResult::ERROR_OPEN_FAILED;
+    }
+
+    is_open_ = true;
+    return ContainerResult::SUCCESS;
+}
+
+void BlockDeviceContainer::close() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!is_open_) {
+        return;
+    }
+
+    // Close AlignedIO first
+    if (io_) {
+        io_->close();
+        io_.reset();
+    }
+
+    if (fd_ >= 0) {
+        ::fsync(fd_);  // Ensure all data is flushed
+        ::close(fd_);
+        fd_ = -1;
+    }
+
+    is_open_ = false;
+}
+
+bool BlockDeviceContainer::isOpen() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return is_open_;
+}
+
+ContainerResult BlockDeviceContainer::write(const void* buffer, uint64_t size, uint64_t offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!is_open_) {
+        setError("Container not open");
+        return ContainerResult::ERROR_NOT_OPEN;
+    }
+
+    if (read_only_) {
+        setError("Container is read-only");
+        return ContainerResult::ERROR_WRITE_FAILED;
+    }
+
+    // Validate alignment (16KB for xTdb)
+    if ((reinterpret_cast<uintptr_t>(buffer) % kExtentSizeBytes) != 0) {
+        setError("Buffer not 16KB-aligned");
+        return ContainerResult::ERROR_INVALID_OFFSET;
+    }
+
+    if ((size % kExtentSizeBytes) != 0) {
+        setError("Size not extent-aligned");
+        return ContainerResult::ERROR_INVALID_SIZE;
+    }
+
+    if ((offset % kExtentSizeBytes) != 0) {
+        setError("Offset not extent-aligned");
+        return ContainerResult::ERROR_INVALID_OFFSET;
+    }
+
+    // Check bounds
+    if (offset + size > device_capacity_) {
+        setError("Write exceeds device capacity");
+        return ContainerResult::ERROR_INVALID_OFFSET;
+    }
+
+    // Perform write
+    ssize_t bytes_written = ::pwrite(fd_, buffer, size, offset);
+    if (bytes_written < 0 || static_cast<uint64_t>(bytes_written) != size) {
+        setError("Write failed: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_WRITE_FAILED;
+    }
+
+    // Update statistics
+    stats_.bytes_written += size;
+    stats_.write_operations++;
+
+    return ContainerResult::SUCCESS;
+}
+
+ContainerResult BlockDeviceContainer::read(void* buffer, uint64_t size, uint64_t offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!is_open_) {
+        setError("Container not open");
+        return ContainerResult::ERROR_NOT_OPEN;
+    }
+
+    // Validate alignment (16KB for xTdb)
+    if ((reinterpret_cast<uintptr_t>(buffer) % kExtentSizeBytes) != 0) {
+        setError("Buffer not 16KB-aligned");
+        return ContainerResult::ERROR_INVALID_OFFSET;
+    }
+
+    if ((size % kExtentSizeBytes) != 0) {
+        setError("Size not extent-aligned");
+        return ContainerResult::ERROR_INVALID_SIZE;
+    }
+
+    if ((offset % kExtentSizeBytes) != 0) {
+        setError("Offset not extent-aligned");
+        return ContainerResult::ERROR_INVALID_OFFSET;
+    }
+
+    // Check bounds
+    if (offset + size > device_capacity_) {
+        setError("Read exceeds device capacity");
+        return ContainerResult::ERROR_INVALID_OFFSET;
+    }
+
+    // Perform read
+    ssize_t bytes_read = ::pread(fd_, buffer, size, offset);
+    if (bytes_read < 0 || static_cast<uint64_t>(bytes_read) != size) {
+        setError("Read failed: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_READ_FAILED;
+    }
+
+    // Update statistics
+    stats_.bytes_read += size;
+    stats_.read_operations++;
+
+    return ContainerResult::SUCCESS;
+}
+
+ContainerResult BlockDeviceContainer::sync() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!is_open_) {
+        setError("Container not open");
+        return ContainerResult::ERROR_NOT_OPEN;
+    }
+
+    if (::fsync(fd_) < 0) {
+        setError("Sync failed: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_SYNC_FAILED;
+    }
+
+    stats_.sync_operations++;
+    return ContainerResult::SUCCESS;
+}
+
+ContainerResult BlockDeviceContainer::preallocate(uint64_t size) {
+    // Block devices are already fully allocated, no-op
+    (void)size;
+    return ContainerResult::SUCCESS;
+}
+
+int BlockDeviceContainer::getFd() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return fd_;
+}
+
+bool BlockDeviceContainer::isBlockDevice(const std::string& device_path) {
+    struct stat st;
+    if (stat(device_path.c_str(), &st) != 0) {
+        return false;
+    }
+
+    return S_ISBLK(st.st_mode);
+}
+
+ContainerResult BlockDeviceContainer::detectDeviceProperties() {
+#ifdef __linux__
+    // Get device size using BLKGETSIZE64
+    uint64_t size_bytes = 0;
+    if (ioctl(fd_, BLKGETSIZE64, &size_bytes) < 0) {
+        setError("Failed to get device size: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+    }
+    device_capacity_ = size_bytes;
+
+    // Get device block size
+    int block_size = 0;
+    if (ioctl(fd_, BLKSSZGET, &block_size) < 0) {
+        // If failed, use default 4KB
+        std::cerr << "[BlockDeviceContainer] Warning: Failed to get block size, using default 4KB" << std::endl;
+        device_block_size_ = 4096;
+    } else {
+        device_block_size_ = block_size;
+    }
+
+    // Verify device capacity is sufficient
+    uint64_t min_capacity = layout_.chunk_size_bytes;  // At least 1 chunk
+    if (device_capacity_ < min_capacity) {
+        setError("Device capacity too small: " + std::to_string(device_capacity_) +
+                 " bytes (minimum: " + std::to_string(min_capacity) + " bytes)");
+        return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+    }
+
+    return ContainerResult::SUCCESS;
+#else
+    setError("Block device support is only available on Linux");
+    return ContainerResult::ERROR_DEVICE_NOT_FOUND;
+#endif
+}
+
+ContainerResult BlockDeviceContainer::initializeNewContainer() {
+    // Create container header
+    ContainerHeaderV12 header;
+    // Constructor already sets magic, version, header_size
+
+    // Calculate capacity based on device size
+    uint64_t usable_capacity = (device_capacity_ / kExtentSizeBytes) * kExtentSizeBytes;
+    header.capacity_extents = usable_capacity / kExtentSizeBytes;
+    header.chunk_size_extents = layout_.chunk_size_bytes / kExtentSizeBytes;
+    header.block_size_extents = layout_.block_size_bytes / kExtentSizeBytes;
+    header.layout = static_cast<uint8_t>(ContainerLayout::LAYOUT_RAW_FIXED);
+    header.capacity_type = static_cast<uint8_t>(CapacityType::CAP_FIXED);  // Block device is fixed
+    header.raw_block_class = 1;  // RAW16K
+
+    // Get current timestamp
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    header.created_ts_us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+
+    // Write header to extent 0
+    AlignedBuffer header_buf(kExtentSizeBytes);
+    std::memcpy(header_buf.data(), &header, sizeof(header));
+
+    ssize_t bytes_written = ::pwrite(fd_, header_buf.data(), kExtentSizeBytes, 0);
+    if (bytes_written < 0 || bytes_written != kExtentSizeBytes) {
+        setError("Failed to write container header: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_CREATE_FAILED;
+    }
+
+    // Initialize WAL region (extent 1-256, 4 MB total)
+    AlignedBuffer zero_buf(kExtentSizeBytes);
+    std::memset(zero_buf.data(), 0, kExtentSizeBytes);
+    for (uint32_t i = 1; i <= 256; i++) {
+        bytes_written = ::pwrite(fd_, zero_buf.data(), kExtentSizeBytes, i * kExtentSizeBytes);
+        if (bytes_written < 0 || bytes_written != kExtentSizeBytes) {
+            setError("Failed to initialize WAL region: " + std::string(strerror(errno)));
+            return ContainerResult::ERROR_CREATE_FAILED;
+        }
+    }
+
+    // Sync to ensure metadata is written
+    ::fsync(fd_);
+
+    // Store metadata
+    std::memset(metadata_.db_instance_id, 0, 16);
+    metadata_.layout = ContainerLayout::LAYOUT_RAW_FIXED;
+    metadata_.capacity_type = CapacityType::CAP_FIXED;
+    metadata_.archive_level = ArchiveLevel::ARCHIVE_RAW;
+    metadata_.capacity_extents = header.capacity_extents;
+    metadata_.capacity_bytes = usable_capacity;
+    metadata_.chunk_size_extents = header.chunk_size_extents;
+    metadata_.block_size_extents = header.block_size_extents;
+    metadata_.created_ts_us = header.created_ts_us;
+
+    return ContainerResult::SUCCESS;
+}
+
+ContainerResult BlockDeviceContainer::readAndValidateHeader() {
+    // Read header from extent 0
+    AlignedBuffer header_buf(kExtentSizeBytes);
+    ssize_t bytes_read = ::pread(fd_, header_buf.data(), kExtentSizeBytes, 0);
+    if (bytes_read < 0 || bytes_read != kExtentSizeBytes) {
+        setError("Failed to read container header: " + std::string(strerror(errno)));
+        return ContainerResult::ERROR_INVALID_HEADER;
+    }
+
+    // Parse header
+    ContainerHeaderV12 header;
+    std::memcpy(&header, header_buf.data(), sizeof(header));
+
+    // Validate magic number
+    if (std::memcmp(header.magic, kContainerMagic, 8) != 0) {
+        setError("Invalid container magic number");
+        return ContainerResult::ERROR_INVALID_HEADER;
+    }
+
+    // Validate version
+    if (header.version != 0x0102) {
+        setError("Unsupported container version");
+        return ContainerResult::ERROR_INVALID_HEADER;
+    }
+
+    // Store metadata
+    std::memcpy(metadata_.db_instance_id, header.db_instance_id, 16);
+    metadata_.layout = static_cast<ContainerLayout>(header.layout);
+    metadata_.capacity_type = static_cast<CapacityType>(header.capacity_type);
+    metadata_.archive_level = static_cast<ArchiveLevel>(header.archive_level);
+    metadata_.capacity_extents = header.capacity_extents;
+    metadata_.capacity_bytes = header.capacity_extents * kExtentSizeBytes;
+    metadata_.chunk_size_extents = header.chunk_size_extents;
+    metadata_.block_size_extents = header.block_size_extents;
+    metadata_.created_ts_us = header.created_ts_us;
+
+    return ContainerResult::SUCCESS;
+}
+
+void BlockDeviceContainer::setError(const std::string& message) {
+    last_error_ = message;
+}
+
+}  // namespace xtdb
