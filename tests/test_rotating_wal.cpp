@@ -1,5 +1,6 @@
-#include "xTdb/rotating_wal.h"
+﻿#include "xTdb/rotating_wal.h"
 #include "xTdb/platform_compat.h"
+#include "test_utils.h"
 #include <iostream>
 #include <cassert>
 #include <cstring>
@@ -63,7 +64,7 @@ void test_basic_initialization() {
 
     wal2.close();
 
-    std::cout << "✓ Basic initialization PASSED" << std::endl;
+    std::cout << u8"✓ Basic initialization PASSED" << std::endl;
 }
 
 // Test 2: Write entries
@@ -117,7 +118,7 @@ void test_write_entries() {
 
     wal.close();
 
-    std::cout << "✓ Write entries PASSED" << std::endl;
+    std::cout << u8"✓ Write entries PASSED" << std::endl;
 }
 
 // Test 3: Segment rotation
@@ -196,7 +197,7 @@ void test_segment_rotation() {
 
     wal.close();
 
-    std::cout << "✓ Segment rotation PASSED" << std::endl;
+    std::cout << u8"✓ Segment rotation PASSED" << std::endl;
 }
 
 // Test 4: Clear segment and reuse
@@ -215,7 +216,7 @@ void test_clear_and_reuse() {
 
     // Print initial segment states
     std::cout << "Initial segment states:" << std::endl;
-    for (size_t s = 0; s < wal.getSegments().size(); s++) {
+    for (uint32_t s = 0; s < (uint32_t)wal.getSegments().size(); s++) {
         const WALSegment& seg = wal.getSegment(s);
         std::cout << "  Segment " << s << ": entries=" << seg.entry_count
                   << ", write_pos=" << seg.write_position
@@ -257,7 +258,7 @@ void test_clear_and_reuse() {
                           << ": " << wal.getLastError() << std::endl;
                 std::cerr << "Current segment: " << wal.getCurrentSegmentId() << std::endl;
                 // Print all segments status
-                for (size_t s = 0; s < wal.getSegments().size(); s++) {
+                for (uint32_t s = 0; s < (uint32_t)wal.getSegments().size(); s++) {
                     const WALSegment& seg = wal.getSegment(s);
                     std::cerr << "  Segment " << s << ": entries=" << seg.entry_count
                               << ", write_pos=" << seg.write_position
@@ -281,7 +282,7 @@ void test_clear_and_reuse() {
 
     wal.close();
 
-    std::cout << "✓ Clear and reuse PASSED" << std::endl;
+    std::cout << u8"✓ Clear and reuse PASSED" << std::endl;
 }
 
 // Test 5: Usage ratio
@@ -322,7 +323,7 @@ void test_usage_ratio() {
 
     wal.close();
 
-    std::cout << "✓ Usage ratio PASSED" << std::endl;
+    std::cout << u8"✓ Usage ratio PASSED" << std::endl;
 }
 
 // Performance test
@@ -372,7 +373,7 @@ void test_performance() {
 
     wal.close();
 
-    std::cout << "✓ Performance test PASSED" << std::endl;
+    std::cout << u8"✓ Performance test PASSED" << std::endl;
 }
 
 int main() {

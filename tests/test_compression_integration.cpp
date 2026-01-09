@@ -4,7 +4,13 @@
 #include "xTdb/quantized_16_encoder.h"
 #include "xTdb/quantized_16_decoder.h"
 #include <vector>
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <iostream>
 
 using namespace xtdb;
@@ -23,7 +29,7 @@ protected:
 
         for (size_t i = 0; i < count; i++) {
             MemRecord rec;
-            rec.time_offset = i;  // milliseconds
+            rec.time_offset = static_cast<uint32_t>(i);  // milliseconds
             rec.value.f64_value = amplitude * std::sin(2.0 * M_PI * i / period);
             rec.quality = 192;
             records.push_back(rec);
@@ -38,7 +44,7 @@ protected:
 
         for (size_t i = 0; i < count; i++) {
             MemRecord rec;
-            rec.time_offset = i;
+            rec.time_offset = static_cast<uint32_t>(i);
             // Add random noise
             double noise_factor = (std::rand() % 100 - 50) / 50.0;
             rec.value.f64_value = mean + noise * noise_factor;
@@ -55,7 +61,7 @@ protected:
 
         for (size_t i = 0; i < count; i++) {
             MemRecord rec;
-            rec.time_offset = i * gap;  // Gaps between points
+            rec.time_offset = static_cast<uint32_t>(i * gap);  // Gaps between points
             rec.value.f64_value = 100.0 + i * 0.1;  // Slow linear trend
             rec.quality = 192;
             records.push_back(rec);
@@ -265,7 +271,7 @@ TEST_F(CompressionIntegrationTest, MixedDataPatterns) {
     // Segment 1: Smooth (0-1000)
     for (size_t i = 0; i < 1000; i++) {
         MemRecord rec;
-        rec.time_offset = i;
+        rec.time_offset = static_cast<uint32_t>(i);
         rec.value.f64_value = 50.0 + 10.0 * std::sin(2.0 * M_PI * i / 200.0);
         rec.quality = 192;
         records.push_back(rec);
@@ -274,7 +280,7 @@ TEST_F(CompressionIntegrationTest, MixedDataPatterns) {
     // Segment 2: Step change
     for (size_t i = 1000; i < 1100; i++) {
         MemRecord rec;
-        rec.time_offset = i;
+        rec.time_offset = static_cast<uint32_t>(i);
         rec.value.f64_value = 100.0;  // Sudden jump
         rec.quality = 192;
         records.push_back(rec);
@@ -283,7 +289,7 @@ TEST_F(CompressionIntegrationTest, MixedDataPatterns) {
     // Segment 3: Linear ramp
     for (size_t i = 1100; i < 2000; i++) {
         MemRecord rec;
-        rec.time_offset = i;
+        rec.time_offset = static_cast<uint32_t>(i);
         rec.value.f64_value = 100.0 + (i - 1100) * 0.05;
         rec.quality = 192;
         records.push_back(rec);

@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+﻿#include <gtest/gtest.h>
 #include "xTdb/swinging_door_encoder.h"
 #include "xTdb/swinging_door_decoder.h"
 #include <cmath>

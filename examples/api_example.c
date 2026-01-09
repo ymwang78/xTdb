@@ -15,11 +15,29 @@
 #include <stdlib.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 /// Get current time in microseconds
 static int64_t get_current_time_us(void) {
+#ifdef _WIN32
+    // Windows implementation using GetSystemTimeAsFileTime
+    FILETIME ft;
+    ULARGE_INTEGER uli;
+    GetSystemTimeAsFileTime(&ft);
+    uli.LowPart = ft.dwLowDateTime;
+    uli.HighPart = ft.dwHighDateTime;
+    // FileTime is in 100-nanosecond intervals since January 1, 1601
+    // Convert to microseconds since Unix epoch (January 1, 1970)
+    int64_t us = (int64_t)(uli.QuadPart / 10LL) - 11644473600000000LL;
+    return us;
+#else
+    // POSIX implementation
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return (int64_t)ts.tv_sec * 1000000LL + (int64_t)ts.tv_nsec / 1000LL;
+#endif
 }
 
 int main(void) {

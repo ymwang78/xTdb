@@ -683,7 +683,7 @@ EngineResult StorageEngine::writePoint(const TagConfig* config,
 
     if (!config) {
         setError("Tag configuration pointer is null");
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     uint32_t tag_id = config->tag_id;
@@ -1053,14 +1053,14 @@ EngineResult StorageEngine::flush() {
     for (const auto& result : write_results) {
         if (!result.success) {
             setError(result.error_msg);
-            return EngineResult::ERR_INVALID_DAT;
+            return EngineResult::ERR_INVALID_DATA;
         }
     }
 
     // Step 6: Batch directory updates (single-threaded for now)
     if (!dir_builder_) {
         setError("Directory builder not initialized");
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     for (const auto& result : write_results) {
@@ -1080,7 +1080,7 @@ EngineResult StorageEngine::flush() {
 
         if (dir_result != DirBuildResult::SUCCESS) {
             setError("Failed to seal block in directory: " + dir_builder_->getLastError());
-            return EngineResult::ERR_INVALID_DAT;
+            return EngineResult::ERR_INVALID_DATA;
         }
 
         // Update stats
@@ -1102,7 +1102,7 @@ EngineResult StorageEngine::flush() {
     DirBuildResult dir_result = dir_builder_->writeDirectory();
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to write directory: " + dir_builder_->getLastError());
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     // Note: With rotating WAL, segment clearing is handled by
@@ -1509,7 +1509,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
                                                      &data_crc32);
     if (write_result != BlockWriteResult::SUCCESS) {
         setError("Failed to write block: " + writer.getLastError());
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     write_stats_.blocks_flushed++;
@@ -1517,7 +1517,7 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
     // Update directory entry using persistent dir_builder
     if (!dir_builder_) {
         setError("Directory builder not initialized");
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     // Get timestamp range from tag_buffer
@@ -1557,14 +1557,14 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
 
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to seal block in directory: " + dir_builder_->getLastError());
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     // Write directory to disk
     dir_result = dir_builder_->writeDirectory();
     if (dir_result != DirBuildResult::SUCCESS) {
         setError("Failed to write directory: " + dir_builder_->getLastError());
-        return EngineResult::ERR_INVALID_DAT;
+        return EngineResult::ERR_INVALID_DATA;
     }
 
     // Update active chunk tracking

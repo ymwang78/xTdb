@@ -42,7 +42,7 @@ enum class EngineResult {
     ERR_STATE_RESTORATION_FAILED,
     ERR_WAL_REPLAY_FAILED,
     ERR_ENGINE_NOT_OPEN,
-    ERR_INVALID_DAT
+    ERR_INVALID_DATA
 };
 
 /// Container information

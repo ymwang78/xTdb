@@ -1,9 +1,15 @@
-#include <gtest/gtest.h>
+﻿#include <gtest/gtest.h>
 #include "xTdb/storage_engine.h"
 #include "xTdb/constants.h"
 #include <filesystem>
 #include <vector>
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <iostream>
 
 using namespace xtdb;
@@ -86,7 +92,7 @@ TEST_F(CrashRecoveryTest, BasicCrashRecovery) {
         }
 
         engine.close();
-        std::cout << "✓ Data integrity verified" << std::endl;
+        std::cout << u8"✓ Data integrity verified" << std::endl;
     }
 }
 
@@ -124,10 +130,10 @@ TEST_F(CrashRecoveryTest, CrashWithoutFlush) {
         EngineResult result = engine.queryPoints(tag_id, base_ts, base_ts + num_points * 1000, results);
 
         if (result == EngineResult::SUCCESS && results.size() > 0) {
-            std::cout << "✓ WAL replay recovered " << results.size() << " points" << std::endl;
+            std::cout << u8"✓ WAL replay recovered " << results.size() << " points" << std::endl;
             EXPECT_GT(results.size(), 0u);
         } else {
-            std::cout << "⚠ No data recovered (WAL may not be implemented yet)" << std::endl;
+            std::cout << u8"⚠ No data recovered (WAL may not be implemented yet)" << std::endl;
         }
 
         engine.close();
@@ -202,7 +208,7 @@ TEST_F(CrashRecoveryTest, MultipleCrashCycles) {
 
         std::cout << "Recovered " << results.size() << " total points" << std::endl;
         EXPECT_EQ(static_cast<size_t>(total_points), results.size());
-        std::cout << "✓ All " << total_points << " points recovered correctly" << std::endl;
+        std::cout << u8"✓ All " << total_points << " points recovered correctly" << std::endl;
 
         engine.close();
     }
@@ -251,7 +257,7 @@ TEST_F(CrashRecoveryTest, CrashDuringChunkSeal) {
         ASSERT_EQ(EngineResult::SUCCESS,
                  engine.queryPoints(tag_id, base_ts, base_ts + 10000000, results));
 
-        std::cout << "✓ Recovered " << results.size() << " points after chunk seal" << std::endl;
+        std::cout << u8"✓ Recovered " << results.size() << " points after chunk seal" << std::endl;
         EXPECT_GT(results.size(), 0u);
 
         engine.close();
@@ -312,7 +318,7 @@ TEST_F(CrashRecoveryTest, MultipleTagsRecovery) {
             }
         }
 
-        std::cout << "✓ All " << num_tags << " tags recovered correctly" << std::endl;
+        std::cout << u8"✓ All " << num_tags << " tags recovered correctly" << std::endl;
         engine.close();
     }
 }
@@ -356,7 +362,7 @@ TEST_F(CrashRecoveryTest, TimeOrderingConsistency) {
                 << "Time ordering violated at index " << i;
         }
 
-        std::cout << "✓ Time ordering preserved for " << results.size() << " points" << std::endl;
+        std::cout << u8"✓ Time ordering preserved for " << results.size() << " points" << std::endl;
         engine.close();
     }
 }
@@ -395,13 +401,14 @@ TEST_F(CrashRecoveryTest, ImmediateCrashStress) {
 
             std::vector<StorageEngine::QueryPoint> results;
             engine.queryPoints(tag_id, base_ts, base_ts + 10000000, results);
-            recovered_total = results.size();
+            recovered_total = static_cast<int>(results.size());
 
             engine.close();
         }
     }
 
-    std::cout << "✓ Completed 10 crash cycles, recovered " << recovered_total << " points" << std::endl;
+    std::cout << u8"✓ Completed 10 crash cycles, recovered " << recovered_total << " points"
+              << std::endl;
     EXPECT_GT(recovered_total, 0);
 }
 
