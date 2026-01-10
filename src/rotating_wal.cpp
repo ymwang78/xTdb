@@ -97,7 +97,7 @@ RotatingWALResult RotatingWAL::open() {
 }
 
 void RotatingWAL::close() {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
 
     if (!is_open_) {
         return;
@@ -235,7 +235,7 @@ RotatingWALResult RotatingWAL::loadContainer() {
 }
 
 RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
 
     if (!is_open_) {
         setError("WAL not open");
@@ -303,7 +303,7 @@ RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
 }
 
 RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries) {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
 
     if (!is_open_) {
         setError("WAL not open");
@@ -378,7 +378,7 @@ RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries)
 }
 
 RotatingWALResult RotatingWAL::sync() {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
 
     if (!is_open_ || !current_writer_) {
         setError("WAL not open");
@@ -476,7 +476,15 @@ RotatingWALResult RotatingWAL::rotateSegment() {
 }
 
 RotatingWALResult RotatingWAL::clearSegment(uint32_t segment_id) {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    // Use recursive_mutex to allow this to be called from flush callback
+    // which is invoked from within rotateSegment() while holding the lock
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
+    return clearSegmentUnlocked(segment_id);
+}
+
+RotatingWALResult RotatingWAL::clearSegmentUnlocked(uint32_t segment_id) {
+    // NOTE: This method assumes wal_mutex_ is already locked
+    // Do NOT acquire the lock here
 
     if (segment_id >= segments_.size()) {
         setError("Invalid segment ID: " + std::to_string(segment_id));
@@ -568,18 +576,18 @@ RotatingWALResult RotatingWAL::growContainer() {
 }
 
 void RotatingWAL::setFlushCallback(SegmentFlushCallback callback) {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
     flush_callback_ = std::move(callback);
 }
 
 const WALSegment& RotatingWAL::getSegment(uint32_t segment_id) const {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
     assert(segment_id < segments_.size());
     return segments_[segment_id];
 }
 
 double RotatingWAL::getUsageRatio() const {
-    std::lock_guard<std::mutex> lock(wal_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(wal_mutex_);
 
     if (segments_.empty()) {
         return 0.0;

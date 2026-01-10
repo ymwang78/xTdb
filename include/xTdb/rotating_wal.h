@@ -192,6 +192,12 @@ private:
     /// @return RotatingWALResult
     RotatingWALResult growContainer();
 
+    /// Clear segment without acquiring lock (internal use)
+    /// Assumes wal_mutex_ is already locked
+    /// @param segment_id Segment ID to clear
+    /// @return RotatingWALResult
+    RotatingWALResult clearSegmentUnlocked(uint32_t segment_id);
+
     /// Set error message
     void setError(const std::string& message);
 
@@ -214,7 +220,9 @@ private:
     RotatingWALStats stats_;
 
     // Thread safety (for async WAL flush)
-    mutable std::mutex wal_mutex_;  // Protect all WAL operations
+    // Use recursive_mutex to allow clearSegment() to be called from flush callback
+    // which is invoked from within rotateSegment() while holding the lock
+    mutable std::recursive_mutex wal_mutex_;  // Protect all WAL operations
 };
 
 }  // namespace xtdb
