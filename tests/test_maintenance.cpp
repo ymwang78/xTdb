@@ -102,8 +102,15 @@ TEST_F(MaintenanceServiceTest, T13_RetentionService) {
         ASSERT_EQ(EngineResult::SUCCESS, result);
     }
 
+    // Explicit flush before sealing
+    result = engine.flush();
+    ASSERT_EQ(EngineResult::SUCCESS, result);
+
     // Explicitly seal the chunk (automatic sealing only happens when chunk is full)
     result = engine.sealCurrentChunk();
+    if (result != EngineResult::SUCCESS) {
+        FAIL() << "sealCurrentChunk failed: " << engine.getLastError();
+    }
     ASSERT_EQ(EngineResult::SUCCESS, result);
 
     // Verify chunk was sealed
@@ -149,8 +156,15 @@ TEST_F(MaintenanceServiceTest, RecentDataNotDeleted) {
         ASSERT_EQ(EngineResult::SUCCESS, result);
     }
 
+    // Explicit flush before sealing
+    result = engine.flush();
+    ASSERT_EQ(EngineResult::SUCCESS, result);
+
     // Explicitly seal the chunk
     result = engine.sealCurrentChunk();
+    if (result != EngineResult::SUCCESS) {
+        FAIL() << "sealCurrentChunk failed: " << engine.getLastError();
+    }
     ASSERT_EQ(EngineResult::SUCCESS, result);
 
     // Verify chunk was sealed

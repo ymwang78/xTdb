@@ -13,6 +13,7 @@
 #ifdef _WIN32
 #include <io.h>
 #include <stdio.h>
+#include <windows.h>
 // Windows doesn't support O_DIRECT easily, so we disable it
 #ifndef O_DIRECT
 #define O_DIRECT 0
@@ -49,6 +50,9 @@ IOResult AlignedIO::open(const std::string& path,
     if (create_if_not_exists) {
         flags |= O_CREAT;
     }
+#ifdef _WIN32
+    flags |= O_BINARY;  // Always use binary mode on Windows
+#endif
 
 #ifdef O_DIRECT
     if (direct_io_) {
@@ -119,11 +123,52 @@ IOResult AlignedIO::write(const void* buffer, uint64_t size, uint64_t offset) {
 
     // Perform pwrite
 #ifdef _WIN32
-    if (::_lseeki64(fd_, offset, SEEK_SET) == -1) {
-        setError("lseek failed: " + std::string(strerror(errno)));
+    // On Windows, use WriteFile API for better control and reliability
+    HANDLE hFile = reinterpret_cast<HANDLE>(::_get_osfhandle(fd_));
+    if (hFile == INVALID_HANDLE_VALUE) {
+        setError("Invalid file handle");
+        return IOResult::ERR_INVALID_FD;
+    }
+    
+    // Ensure file is large enough before writing
+    int64_t current_size = getFileSize();
+    uint64_t required_size = offset + size;
+    if (current_size >= 0 && static_cast<uint64_t>(current_size) < required_size) {
+        // Extend file using SetFilePointerEx and SetEndOfFile
+        LARGE_INTEGER liSize;
+        liSize.QuadPart = static_cast<LONGLONG>(required_size);
+        if (::SetFilePointerEx(hFile, liSize, nullptr, FILE_BEGIN) == 0) {
+            setError("SetFilePointerEx for extension failed: " + std::to_string(::GetLastError()));
+            return IOResult::ERR_IO_FAILED;
+        }
+        if (::SetEndOfFile(hFile) == 0) {
+            setError("SetEndOfFile failed: " + std::to_string(::GetLastError()));
+            return IOResult::ERR_IO_FAILED;
+        }
+    }
+    
+    // Set file pointer to write position
+    LARGE_INTEGER liOffset;
+    liOffset.QuadPart = static_cast<LONGLONG>(offset);
+    if (::SetFilePointerEx(hFile, liOffset, nullptr, FILE_BEGIN) == 0) {
+        setError("SetFilePointerEx failed: " + std::to_string(::GetLastError()));
         return IOResult::ERR_IO_FAILED;
     }
-    int written = ::_write(fd_, buffer, static_cast<unsigned int>(size));
+    
+    // Write data using WriteFile
+    DWORD bytes_written = 0;
+    DWORD size_to_write = static_cast<DWORD>(size);
+    if (size_to_write != size) {
+        setError("Size too large for Windows WriteFile");
+        return IOResult::ERR_IO_FAILED;
+    }
+    
+    if (::WriteFile(hFile, buffer, size_to_write, &bytes_written, nullptr) == 0) {
+        setError("WriteFile failed: " + std::to_string(::GetLastError()));
+        return IOResult::ERR_IO_FAILED;
+    }
+    
+    int written = static_cast<int>(bytes_written);
 #else
     ssize_t written = ::pwrite(fd_, buffer, size, offset);
 #endif
@@ -160,14 +205,41 @@ IOResult AlignedIO::read(void* buffer, uint64_t size, uint64_t offset) {
 
     // Perform pread
 #ifdef _WIN32
-    if (::_lseeki64(fd_, offset, SEEK_SET) == -1) {
-        setError("lseek failed: " + std::string(strerror(errno)));
+    // On Windows, use ReadFile API for better control
+    HANDLE hFile = reinterpret_cast<HANDLE>(::_get_osfhandle(fd_));
+    if (hFile == INVALID_HANDLE_VALUE) {
+        setError("Invalid file handle");
+        return IOResult::ERR_INVALID_FD;
+    }
+    
+    // Set file pointer
+    LARGE_INTEGER liOffset;
+    liOffset.QuadPart = static_cast<LONGLONG>(offset);
+    if (::SetFilePointerEx(hFile, liOffset, nullptr, FILE_BEGIN) == 0) {
+        setError("SetFilePointerEx failed: " + std::to_string(::GetLastError()));
         return IOResult::ERR_IO_FAILED;
     }
-    int bytes_read = ::_read(fd_, buffer, static_cast<unsigned int>(size));
+    
+    // Read data
+    DWORD bytes_read = 0;
+    DWORD size_to_read = static_cast<DWORD>(size);
+    if (size_to_read != size) {
+        setError("Size too large for Windows ReadFile");
+        return IOResult::ERR_IO_FAILED;
+    }
+    
+    if (::ReadFile(hFile, buffer, size_to_read, &bytes_read, nullptr) == 0) {
+        setError("ReadFile failed: " + std::to_string(::GetLastError()));
+        return IOResult::ERR_IO_FAILED;
+    }
+    
+    if (bytes_read != size_to_read) {
+        setError("Partial read: expected " + std::to_string(size_to_read) +
+                " bytes, read " + std::to_string(bytes_read) + " bytes");
+        return IOResult::ERR_IO_FAILED;
+    }
 #else
     ssize_t bytes_read = ::pread(fd_, buffer, size, offset);
-#endif
     if (bytes_read < 0) {
         setError("pread failed: " + std::string(strerror(errno)));
         return IOResult::ERR_IO_FAILED;
@@ -178,6 +250,7 @@ IOResult AlignedIO::read(void* buffer, uint64_t size, uint64_t offset) {
                 " bytes, read " + std::to_string(bytes_read) + " bytes");
         return IOResult::ERR_IO_FAILED;
     }
+#endif
 
     // Update statistics
     stats_.bytes_read += size;
@@ -233,8 +306,21 @@ IOResult AlignedIO::sync() {
     }
 
 #ifdef _WIN32
+    // First commit any buffered data
     if (::_commit(fd_) != 0) {
         setError("commit failed: " + std::string(strerror(errno)));
+        return IOResult::ERR_IO_FAILED;
+    }
+    
+    // Then use FlushFileBuffers to ensure data is written to disk
+    HANDLE hFile = reinterpret_cast<HANDLE>(::_get_osfhandle(fd_));
+    if (hFile == INVALID_HANDLE_VALUE) {
+        setError("Invalid file handle for flush");
+        return IOResult::ERR_INVALID_FD;
+    }
+    
+    if (::FlushFileBuffers(hFile) == 0) {
+        setError("FlushFileBuffers failed: " + std::to_string(::GetLastError()));
         return IOResult::ERR_IO_FAILED;
     }
 #else

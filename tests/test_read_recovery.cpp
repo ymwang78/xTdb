@@ -175,6 +175,9 @@ TEST_F(ReadRecoveryTest, BlockReaderReadRecords) {
     ASSERT_EQ(BlockWriteResult::SUCCESS,
               writer.writeBlock(0, 0, tag_buffer));
 
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     // Read back using BlockReader
     BlockReader reader(io_.get(), layout_);
     std::vector<MemRecord> read_records;
@@ -232,6 +235,9 @@ TEST_F(ReadRecoveryTest, BlockReaderMultipleBlocks) {
         ASSERT_EQ(BlockWriteResult::SUCCESS,
                   writer.writeBlock(0, block_idx, tag_buffer));
     }
+
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
 
     // Read back all blocks
     BlockReader reader(io_.get(), layout_);
@@ -298,6 +304,9 @@ TEST_F(ReadRecoveryTest, T7_DisasterRecovery) {
                   writer.writeBlock(0, block_idx, tag_buffer));
     }
 
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     // 2. Seal phase
     DirectoryBuilder dir_builder(io_.get(), layout_, 0);
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.initialize());
@@ -314,6 +323,9 @@ TEST_F(ReadRecoveryTest, T7_DisasterRecovery) {
     }
 
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.writeDirectory());
+
+    // Sync to ensure directory is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
 
     ChunkSealer sealer(io_.get(), mutator_.get());
     ASSERT_EQ(SealResult::SUCCESS,
@@ -395,6 +407,9 @@ TEST_F(ReadRecoveryTest, T8_PartialWrite) {
         ASSERT_EQ(BlockWriteResult::SUCCESS,
                   writer.writeBlock(0, block_idx, tag_buffer));
     }
+
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
 
     // Seal only first 5 blocks (simulate crash during seal)
     DirectoryBuilder dir_builder(io_.get(), layout_, 0);

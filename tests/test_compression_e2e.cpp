@@ -211,6 +211,9 @@ TEST_F(CompressionE2ETest, Quantized16WriteRead) {
     auto write_result = writer.writeBlock(chunk_offset, data_block_index, tag_buffer);
     ASSERT_EQ(BlockWriteResult::SUCCESS, write_result);
 
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     std::cout << "Original records: " << tag_buffer.records.size() << std::endl;
 
     // Setup directory entry for reading
@@ -295,6 +298,9 @@ TEST_F(CompressionE2ETest, RAWvsQuantized) {
     // Write Quantized
     auto quant_write = writer.writeBlock(0, 1, quantized_buffer);
     ASSERT_EQ(BlockWriteResult::SUCCESS, quant_write);
+
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
 
     // Read back and compare storage efficiency
     BlockDirEntryV16 raw_entry, quant_entry;

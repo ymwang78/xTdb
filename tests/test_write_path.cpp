@@ -143,6 +143,9 @@ TEST_F(WritePathTest, BlockWriterBlindWrite) {
     ASSERT_EQ(BlockWriteResult::SUCCESS,
               writer.writeBlock(0, 0, tag_buffer));
 
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     // Verify statistics
     EXPECT_EQ(1, writer.getStats().blocks_written);
     EXPECT_EQ(layout_.block_size_bytes, writer.getStats().bytes_written);
@@ -154,10 +157,23 @@ TEST_F(WritePathTest, BlockWriterBlindWrite) {
     uint64_t data_offset = LayoutCalculator::calculateBlockOffset(
         0, data_block_0_index, layout_, 0);  // container_base=0 (no container header in test)
 
+    // Check file size and offset
+    int64_t file_size = io_->getFileSize();
+    EXPECT_GT(file_size, 0) << "File should have been preallocated";
+    EXPECT_GE(file_size, static_cast<int64_t>(data_offset + layout_.block_size_bytes))
+        << "File size (" << file_size << ") should be >= offset + block_size ("
+        << (data_offset + layout_.block_size_bytes) << ")";
+
     // Read back the block
     AlignedBuffer read_buffer(layout_.block_size_bytes);
-    ASSERT_EQ(IOResult::SUCCESS,
-              io_->read(read_buffer.data(), layout_.block_size_bytes, data_offset));
+    IOResult read_result = io_->read(read_buffer.data(), layout_.block_size_bytes, data_offset);
+    if (read_result != IOResult::SUCCESS) {
+        FAIL() << "Read failed: " << io_->getLastError()
+               << " (file_size=" << file_size
+               << ", data_offset=" << data_offset
+               << ", block_size=" << layout_.block_size_bytes << ")";
+    }
+    ASSERT_EQ(IOResult::SUCCESS, read_result);
 
     // Verify first record
     const char* data = static_cast<const char*>(read_buffer.data());

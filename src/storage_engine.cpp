@@ -892,14 +892,18 @@ EngineResult StorageEngine::flush() {
     // Phase 2: Parallel flush implementation
     // Step 1: Collect non-empty buffers and prepare for parallel flush
     std::vector<std::pair<uint32_t, TagBuffer>> buffers_to_flush;
+    buffers_to_flush.reserve(buffers_.size());  // Pre-allocate to avoid reallocation during emplace_back
     {
         std::unique_lock<std::shared_mutex> buffers_lock(buffers_mutex_);
         for (auto& [tag_id, tag_buffer] : buffers_) {
             if (!tag_buffer.records.empty()) {
-                // Make a copy of the buffer to flush
-                buffers_to_flush.emplace_back(tag_id, tag_buffer);
-                // Clear the original buffer immediately to allow new writes
-                tag_buffer.records.clear();
+                // Move the buffer to avoid expensive copy of large vector
+                // This avoids copying large std::vector<MemRecord> which can cause
+                // memory issues during vector reallocation
+                buffers_to_flush.emplace_back(tag_id, std::move(tag_buffer));
+                // Re-initialize the moved-from buffer for reuse
+                tag_buffer = TagBuffer();
+                tag_buffer.tag_id = tag_id;  // Restore tag_id for future use
             }
         }
     }  // Release buffers lock
@@ -913,6 +917,21 @@ EngineResult StorageEngine::flush() {
         std::lock_guard<std::mutex> chunk_lock(active_chunk_mutex_);
         if (active_chunk_.blocks_used >= active_chunk_.blocks_total) {
             // Chunk is full, need to seal and allocate new one
+
+            // Ensure directory is written to disk before sealing
+            if (dir_builder_) {
+                DirBuildResult dir_result = dir_builder_->writeDirectory();
+                if (dir_result != DirBuildResult::SUCCESS) {
+                    setError("Failed to write directory before sealing: " + dir_builder_->getLastError());
+                    return EngineResult::ERR_INVALID_DATA;
+                }
+                // Sync directory to disk
+                IOResult sync_result = io_->sync();
+                if (sync_result != IOResult::SUCCESS) {
+                    setError("Failed to sync directory before sealing: " + io_->getLastError());
+                    return EngineResult::ERR_INVALID_DATA;
+                }
+            }
 
             // Seal current chunk
             ChunkSealer sealer(io_, mutator_.get());
@@ -988,9 +1007,32 @@ EngineResult StorageEngine::flush() {
         size_t io_index = next_io_index_.fetch_add(1) % io_pool_.size();
         AlignedIO* thread_io = io_pool_[io_index].get();
 
-        // Submit task to thread pool
-        auto future = flush_pool_->submit([this, tag_id, tag_buffer, block_index,
-                                           chunk_offset, thread_io]() -> WriteResult {
+        // Extract metadata before moving tag_buffer (needed for result)
+        int64_t start_ts_us = tag_buffer.start_ts_us;
+        TimeUnit time_unit = tag_buffer.time_unit;
+        ValueType value_type = tag_buffer.value_type;
+        EncodingType encoding_type = tag_buffer.encoding_type;
+        double encoding_tolerance = tag_buffer.encoding_tolerance;
+        double encoding_compression_factor = tag_buffer.encoding_compression_factor;
+        size_t record_count = tag_buffer.records.size();
+        
+        // Calculate max time offset before moving (needed for block_end_ts)
+        uint32_t max_offset = 0;
+        if (!tag_buffer.records.empty()) {
+            for (const auto& rec : tag_buffer.records) {
+                if (rec.time_offset > max_offset) {
+                    max_offset = rec.time_offset;
+                }
+            }
+        }
+
+        // Submit task to thread pool - MOVE tag_buffer to avoid expensive copy
+        // This prevents memory allocation failures when buffers contain large vectors
+        auto future = flush_pool_->submit([this, tag_id, tag_buffer = std::move(tag_buffer),
+                                           block_index, chunk_offset, thread_io,
+                                           start_ts_us, time_unit, value_type, encoding_type,
+                                           encoding_tolerance, encoding_compression_factor,
+                                           record_count, max_offset]() -> WriteResult {
             WriteResult result;
             result.tag_id = tag_id;
             result.block_index = block_index;
@@ -1008,29 +1050,19 @@ EngineResult StorageEngine::flush() {
                 return result;
             }
 
-            // Calculate timestamp range
-            result.block_start_ts = tag_buffer.start_ts_us;
-            result.block_end_ts = tag_buffer.start_ts_us;
-            if (!tag_buffer.records.empty()) {
-                uint32_t max_offset = 0;
-                for (const auto& rec : tag_buffer.records) {
-                    if (rec.time_offset > max_offset) {
-                        max_offset = rec.time_offset;
-                    }
-                }
-                result.block_end_ts = tag_buffer.start_ts_us +
-                                     static_cast<int64_t>(max_offset) * 1000;
-            }
+            // Calculate timestamp range (using captured values)
+            result.block_start_ts = start_ts_us;
+            result.block_end_ts = start_ts_us + static_cast<int64_t>(max_offset) * 1000;
 
-            // Store metadata for directory update
-            result.time_unit = tag_buffer.time_unit;
-            result.value_type = tag_buffer.value_type;
-            result.record_count = static_cast<uint32_t>(tag_buffer.records.size());
-            result.encoding_type = tag_buffer.encoding_type;
+            // Store metadata for directory update (using captured values)
+            result.time_unit = time_unit;
+            result.value_type = value_type;
+            result.record_count = static_cast<uint32_t>(record_count);
+            result.encoding_type = encoding_type;
 
             // Convert encoding parameters
-            float tolerance_f = static_cast<float>(tag_buffer.encoding_tolerance);
-            float compression_factor_f = static_cast<float>(tag_buffer.encoding_compression_factor);
+            float tolerance_f = static_cast<float>(encoding_tolerance);
+            float compression_factor_f = static_cast<float>(encoding_compression_factor);
             std::memcpy(&result.encoding_param1, &tolerance_f, 4);
             std::memcpy(&result.encoding_param2, &compression_factor_f, 4);
 
@@ -1041,11 +1073,17 @@ EngineResult StorageEngine::flush() {
         write_futures.push_back(std::move(future));
     }
 
-    // Step 4: Wait for all writes to complete
+    // Step 4: Wait for all writes to complete (with timeout to prevent deadlock)
     std::vector<WriteResult> write_results;
     write_results.reserve(write_futures.size());
 
     for (auto& future : write_futures) {
+        // Use wait_for with timeout to detect deadlock
+        auto status = future.wait_for(std::chrono::seconds(30));
+        if (status == std::future_status::timeout) {
+            setError("Timeout waiting for flush task completion - possible deadlock");
+            return EngineResult::ERR_INVALID_DATA;
+        }
         write_results.push_back(future.get());
     }
 
@@ -1462,6 +1500,21 @@ EngineResult StorageEngine::flushSingleTag(uint32_t tag_id, TagBuffer& tag_buffe
     // Check if we need to roll (allocate new chunk)
     if (active_chunk_.blocks_used >= active_chunk_.blocks_total) {
         // Chunk is full, need to seal and allocate new one
+
+        // Ensure directory is written to disk before sealing
+        if (dir_builder_) {
+            DirBuildResult dir_result = dir_builder_->writeDirectory();
+            if (dir_result != DirBuildResult::SUCCESS) {
+                setError("Failed to write directory before sealing: " + dir_builder_->getLastError());
+                return EngineResult::ERR_INVALID_DATA;
+            }
+            // Sync directory to disk
+            IOResult sync_result = io_->sync();
+            if (sync_result != IOResult::SUCCESS) {
+                setError("Failed to sync directory before sealing: " + io_->getLastError());
+                return EngineResult::ERR_INVALID_DATA;
+            }
+        }
 
         // Seal current chunk
         ChunkSealer sealer(io_, mutator_.get());

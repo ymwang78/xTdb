@@ -2,18 +2,24 @@
 #include "xTdb/block_device_container.h"
 #include "xTdb/container_manager.h"
 #include "xTdb/aligned_io.h"
+#include "test_utils.h"
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <fstream>
 
 using namespace xtdb;
+namespace fs = std::filesystem;
 
 class BlockDeviceAdvancedTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_dir_ = "/tmp/test_block_device_advanced";
-        std::filesystem::remove_all(test_dir_);
-        std::filesystem::create_directories(test_dir_);
+        // Use cross-platform temp directory
+        std::string temp_dir = get_temp_dir();
+        test_dir_ = join_path(temp_dir, "test_block_device_advanced");
+        if (fs::exists(test_dir_)) {
+            fs::remove_all(test_dir_);
+        }
+        fs::create_directories(test_dir_);
 
         // Check if test device is provided via environment variable
         const char* env_device = std::getenv("XTDB_TEST_DEVICE");
@@ -27,7 +33,7 @@ protected:
             // No real block device - create simulated file for testing
             has_real_block_device_ = false;
             use_test_mode_ = true;
-            test_device_ = test_dir_ + "/simulated_block_device.img";
+            test_device_ = join_path(test_dir_, "simulated_block_device.img");
 
             // Create a 512MB file for testing
             std::cout << "[Setup] No XTDB_TEST_DEVICE provided. Using simulated file." << std::endl;
@@ -55,7 +61,9 @@ protected:
     }
 
     void TearDown() override {
-        std::filesystem::remove_all(test_dir_);
+        if (fs::exists(test_dir_)) {
+            fs::remove_all(test_dir_);
+        }
     }
 
     std::string test_dir_;
@@ -129,7 +137,7 @@ TEST_F(BlockDeviceAdvancedTest, StorageEngineWithBlockDevice) {
 
     EngineConfig config;
     config.data_dir = test_dir_;
-    config.db_path = test_dir_ + "/meta.db";
+    config.db_path = join_path(test_dir_, "meta.db");
     config.container_type = ContainerType::BLOCK_DEVICE;
     config.block_device_path = test_device_;
     config.block_device_test_mode = use_test_mode_;  // Use test mode for simulated files
@@ -206,7 +214,7 @@ TEST_F(BlockDeviceAdvancedTest, DataPersistenceOnBlockDevice) {
 
     EngineConfig config;
     config.data_dir = test_dir_;
-    config.db_path = test_dir_ + "/meta.db";
+    config.db_path = join_path(test_dir_, "meta.db");
     config.container_type = ContainerType::BLOCK_DEVICE;
     config.block_device_path = test_device_;
     config.block_device_test_mode = use_test_mode_;  // Use test mode for simulated files
@@ -282,8 +290,8 @@ TEST_F(BlockDeviceAdvancedTest, PerformanceComparison) {
     auto measureWriteTime = [&](ContainerType type, const std::string& path, bool test_mode) -> double {
         EngineConfig config;
         config.data_dir = test_dir_;
-        config.db_path = test_dir_ + "/meta_" +
-                        (type == ContainerType::BLOCK_DEVICE ? "block" : "file") + ".db";
+        config.db_path = join_path(test_dir_, std::string("meta_") +
+                        (type == ContainerType::BLOCK_DEVICE ? "block" : "file") + ".db");
         config.container_type = type;
 
         if (type == ContainerType::BLOCK_DEVICE) {

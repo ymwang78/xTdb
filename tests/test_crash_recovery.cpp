@@ -64,6 +64,10 @@ TEST_F(CrashRecoveryTest, BasicCrashRecovery) {
 
         // Flush to ensure data is written
         ASSERT_EQ(EngineResult::SUCCESS, engine.flush());
+        
+        // Seal chunk so data can be queried
+        ASSERT_EQ(EngineResult::SUCCESS, engine.sealCurrentChunk());
+        
         std::cout << "Wrote " << num_points << " points" << std::endl;
 
         engine.close();

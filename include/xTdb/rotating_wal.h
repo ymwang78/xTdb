@@ -10,6 +10,7 @@
 #include <memory>
 #include <functional>
 #include <set>
+#include <mutex>
 
 namespace xtdb {
 
@@ -211,6 +212,9 @@ private:
 
     // Statistics
     RotatingWALStats stats_;
+
+    // Thread safety (for async WAL flush)
+    mutable std::mutex wal_mutex_;  // Protect all WAL operations
 };
 
 }  // namespace xtdb

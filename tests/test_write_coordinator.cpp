@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 #include "xTdb/storage_engine.h"
 #include "xTdb/constants.h"
+#include "test_utils.h"
 #include <filesystem>
 #include <cstring>
+#include <thread>
+#include <chrono>
 
 using namespace xtdb;
 namespace fs = std::filesystem;
@@ -10,6 +13,10 @@ namespace fs = std::filesystem;
 class WriteCoordinatorTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // Use cross-platform temp directory
+        std::string temp_dir = get_temp_dir();
+        test_dir_ = join_path(temp_dir, "xtdb_test_write");
+        
         // Clean up test directory
         if (fs::exists(test_dir_)) {
             fs::remove_all(test_dir_);
@@ -18,20 +25,32 @@ protected:
 
         // Setup config with small chunk for testing
         config_.data_dir = test_dir_;
-        config_.db_path = test_dir_ + "/meta.db";
+        config_.db_path = join_path(test_dir_, "meta.db");
         config_.layout.block_size_bytes = 16384;
         // Use smaller chunk size for faster testing (4MB instead of 256MB)
         config_.layout.chunk_size_bytes = 4 * 1024 * 1024;
     }
 
     void TearDown() override {
-        // Clean up
-        if (fs::exists(test_dir_)) {
-            fs::remove_all(test_dir_);
+        // Clean up - wait a bit on Windows to ensure files are closed
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        // Try multiple times to remove directory (Windows may hold files briefly)
+        for (int i = 0; i < 3; i++) {
+            if (fs::exists(test_dir_)) {
+                try {
+                    fs::remove_all(test_dir_);
+                    break;
+                } catch (const fs::filesystem_error& e) {
+                    if (i < 2) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                }
+            }
         }
     }
 
-    std::string test_dir_ = "/tmp/xtdb_test_write";
+    std::string test_dir_;
     EngineConfig config_;
 };
 

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "xTdb/storage_engine.h"
 #include "xTdb/constants.h"
+#include "test_utils.h"
 #include <filesystem>
 #include <vector>
 #ifndef _USE_MATH_DEFINES
@@ -21,6 +22,10 @@ using namespace std::chrono;
 class LargeScaleSimulationTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // Use cross-platform temp directory
+        std::string temp_dir = get_temp_dir();
+        test_dir_ = join_path(temp_dir, "xtdb_large_scale_test");
+        
         // Clean up test directory
         if (fs::exists(test_dir_)) {
             fs::remove_all(test_dir_);
@@ -29,7 +34,7 @@ protected:
 
         // Setup config with larger chunks
         config_.data_dir = test_dir_;
-        config_.db_path = test_dir_ + "/meta.db";
+        config_.db_path = join_path(test_dir_, "meta.db");
         config_.layout.block_size_bytes = 16384;
         config_.layout.chunk_size_bytes = 64 * 1024 * 1024;  // 64MB chunks
     }
@@ -51,7 +56,7 @@ protected:
         return total_size;
     }
 
-    std::string test_dir_ = "/tmp/xtdb_large_scale_test";
+    std::string test_dir_;
     EngineConfig config_;
 };
 

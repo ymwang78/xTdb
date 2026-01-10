@@ -208,6 +208,9 @@ TEST_F(EndToEndTest, QueryBlocksByTimeRange) {
 
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.writeDirectory());
 
+    // Sync to ensure directory is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     ChunkSealer sealer(io_.get(), mutator_.get());
     ASSERT_EQ(SealResult::SUCCESS,
               sealer.sealChunk(0, layout_, 1000000, 1950000));
@@ -269,6 +272,9 @@ TEST_F(EndToEndTest, T9_CompleteWorkflow) {
                   writer.writeBlock(0, block_idx, tag_buffer));
     }
 
+    // Sync to ensure data is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     // Phase 2: Seal blocks and chunk
     DirectoryBuilder dir_builder(io_.get(), layout_, 0);
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.initialize());
@@ -286,6 +292,9 @@ TEST_F(EndToEndTest, T9_CompleteWorkflow) {
     }
 
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.writeDirectory());
+
+    // Sync to ensure directory is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
 
     ChunkSealer sealer(io_.get(), mutator_.get());
     ASSERT_EQ(SealResult::SUCCESS,

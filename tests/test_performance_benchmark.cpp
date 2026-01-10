@@ -98,6 +98,9 @@ TEST_F(PerformanceBenchmark, SingleTagWriteThroughput) {
 
         EngineResult result = engine.writePoint(tag_id, timestamp_us,
                                                static_cast<double>(i), 192);
+        if (result != EngineResult::SUCCESS) {
+            FAIL() << "writePoint failed at iteration " << i << ": " << engine.getLastError();
+        }
         ASSERT_EQ(result, EngineResult::SUCCESS);
 
         auto write_end = std::chrono::high_resolution_clock::now();

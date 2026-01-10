@@ -97,6 +97,8 @@ RotatingWALResult RotatingWAL::open() {
 }
 
 void RotatingWAL::close() {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
+
     if (!is_open_) {
         return;
     }
@@ -233,6 +235,8 @@ RotatingWALResult RotatingWAL::loadContainer() {
 }
 
 RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
+
     if (!is_open_) {
         setError("WAL not open");
         return RotatingWALResult::ERR_IO_FAILED;
@@ -299,6 +303,8 @@ RotatingWALResult RotatingWAL::append(const WALEntry& entry) {
 }
 
 RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries) {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
+
     if (!is_open_) {
         setError("WAL not open");
         return RotatingWALResult::ERR_IO_FAILED;
@@ -372,6 +378,8 @@ RotatingWALResult RotatingWAL::batchAppend(const std::vector<WALEntry>& entries)
 }
 
 RotatingWALResult RotatingWAL::sync() {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
+
     if (!is_open_ || !current_writer_) {
         setError("WAL not open");
         return RotatingWALResult::ERR_IO_FAILED;
@@ -388,6 +396,9 @@ RotatingWALResult RotatingWAL::sync() {
 }
 
 RotatingWALResult RotatingWAL::rotateSegment() {
+    // NOTE: This method is called from append() and batchAppend() which already hold wal_mutex_
+    // Do NOT acquire the lock here to avoid deadlock
+    // If called directly (should not happen), ensure lock is already held
     if (!is_open_) {
         setError("WAL not open");
         return RotatingWALResult::ERR_IO_FAILED;
@@ -465,6 +476,8 @@ RotatingWALResult RotatingWAL::rotateSegment() {
 }
 
 RotatingWALResult RotatingWAL::clearSegment(uint32_t segment_id) {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
+
     if (segment_id >= segments_.size()) {
         setError("Invalid segment ID: " + std::to_string(segment_id));
         return RotatingWALResult::ERR_IO_FAILED;
@@ -516,6 +529,9 @@ RotatingWALResult RotatingWAL::clearSegment(uint32_t segment_id) {
 }
 
 RotatingWALResult RotatingWAL::growContainer() {
+    // NOTE: This method is called from rotateSegment() which already holds wal_mutex_
+    // Do NOT acquire the lock here to avoid deadlock
+    // If called directly (should not happen), ensure lock is already held
     if (!config_.auto_grow) {
         setError("Auto-grow not enabled");
         return RotatingWALResult::ERR_IO_FAILED;
@@ -552,15 +568,19 @@ RotatingWALResult RotatingWAL::growContainer() {
 }
 
 void RotatingWAL::setFlushCallback(SegmentFlushCallback callback) {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
     flush_callback_ = std::move(callback);
 }
 
 const WALSegment& RotatingWAL::getSegment(uint32_t segment_id) const {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
     assert(segment_id < segments_.size());
     return segments_[segment_id];
 }
 
 double RotatingWAL::getUsageRatio() const {
+    std::lock_guard<std::mutex> lock(wal_mutex_);
+
     if (segments_.empty()) {
         return 0.0;
     }

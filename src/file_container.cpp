@@ -35,40 +35,62 @@ ContainerResult FileContainer::open(bool create_if_not_exists) {
         return ContainerResult::ERR_ALREADY_OPEN;
     }
 
-    // Check if file exists
+    // Check if file exists (but don't fail if stat fails, try opening anyway)
     struct stat st;
     bool exists = (stat(path_.c_str(), &st) == 0);
-
-    if (!exists && !create_if_not_exists) {
-        setError("Container file does not exist: " + path_);
-        return ContainerResult::ERR_OPENFD_FAILED;
-    }
 
     // Open file using AlignedIO
     io_ = std::make_unique<AlignedIO>();
     IOResult io_result = io_->open(path_, create_if_not_exists, direct_io_);
     if (io_result != IOResult::SUCCESS) {
-        setError("Failed to open file: " + io_->getLastError());
+        if (!create_if_not_exists && !exists) {
+            setError("Container file does not exist: " + path_);
+        } else {
+            setError("Failed to open file: " + io_->getLastError());
+        }
         io_.reset();
         return ContainerResult::ERR_OPENFD_FAILED;
     }
 
-    // If file exists, read and validate header
-    if (exists) {
-        ContainerResult result = readAndValidateHeader();
-        if (result != ContainerResult::SUCCESS) {
-            io_->close();
-            io_.reset();
-            return result;
-        }
-    } else {
-        // New container - initialize
+    // Try to read and validate header first
+    // This is the most reliable way to determine if this is an existing container
+    ContainerResult header_result = readAndValidateHeader();
+    if (header_result == ContainerResult::SUCCESS) {
+        // Successfully read header, this is an existing container
+        is_open_ = true;
+        return ContainerResult::SUCCESS;
+    }
+    
+    // Header read failed - check if this might be a new file
+    // Only initialize if create_if_not_exists is true
+    if (!create_if_not_exists) {
+        // File exists but header is invalid - return error
+        io_->close();
+        io_.reset();
+        setError("Container file exists but header is invalid: " + getLastError());
+        return ContainerResult::ERR_INVALID_HEADER;
+    }
+    
+    // Check file size to see if it's a new file
+    int64_t file_size = io_->getFileSize();
+    bool is_new_file = (file_size < 0 || file_size <= static_cast<int64_t>(kExtentSizeBytes));
+    
+    // If file seems new (small or can't get size), initialize it
+    if (is_new_file) {
         ContainerResult result = initializeNewContainer();
         if (result != ContainerResult::SUCCESS) {
             io_->close();
             io_.reset();
             return result;
         }
+    } else {
+        // File exists and is large enough but header is invalid
+        // This is an error - don't overwrite existing data
+        io_->close();
+        io_.reset();
+        setError("Container file exists but header is invalid (file size: " + 
+                 std::to_string(file_size) + " bytes)");
+        return ContainerResult::ERR_INVALID_HEADER;
     }
 
     is_open_ = true;
@@ -231,6 +253,13 @@ ContainerResult FileContainer::initializeNewContainer() {
         return ContainerResult::ERR_CREATE_FAILED;
     }
 
+    // Sync to ensure header is written to disk
+    io_result = io_->sync();
+    if (io_result != IOResult::SUCCESS) {
+        setError("Failed to sync container header: " + io_->getLastError());
+        return ContainerResult::ERR_CREATE_FAILED;
+    }
+
     // Initialize WAL region (extent 1-256, 4 MB total)
     // Zero-fill the WAL region so it's ready for use
     AlignedBuffer zero_buf(kExtentSizeBytes);
@@ -241,6 +270,13 @@ ContainerResult FileContainer::initializeNewContainer() {
             setError("Failed to initialize WAL region: " + io_->getLastError());
             return ContainerResult::ERR_CREATE_FAILED;
         }
+    }
+
+    // Sync WAL region initialization
+    io_result = io_->sync();
+    if (io_result != IOResult::SUCCESS) {
+        setError("Failed to sync WAL region: " + io_->getLastError());
+        return ContainerResult::ERR_CREATE_FAILED;
     }
 
     // Preallocate container space (optional, for better performance)

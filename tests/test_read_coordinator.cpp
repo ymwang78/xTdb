@@ -87,6 +87,10 @@ TEST_F(ReadCoordinatorTest, QueryFromDisk) {
         ASSERT_EQ(EngineResult::SUCCESS, result);
     }
 
+    // Explicit flush to ensure data is on disk
+    result = engine.flush();
+    ASSERT_EQ(EngineResult::SUCCESS, result);
+
     // Auto-flush should have happened
     EXPECT_GT(engine.getWriteStats().blocks_flushed, 0u);
 

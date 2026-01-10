@@ -309,10 +309,16 @@ TEST_F(SealDirectoryTest, IntegratedWriteSealWorkflow) {
     // Write directory
     ASSERT_EQ(DirBuildResult::SUCCESS, dir_builder.writeDirectory());
 
+    // Sync to ensure directory is written to disk
+    ASSERT_EQ(IOResult::SUCCESS, io_->sync());
+
     // Seal chunk
     ChunkSealer sealer(io_.get(), mutator_.get());
-    ASSERT_EQ(SealResult::SUCCESS,
-              sealer.sealChunk(0, layout_, global_start_ts, global_end_ts));
+    SealResult seal_result = sealer.sealChunk(0, layout_, global_start_ts, global_end_ts);
+    if (seal_result != SealResult::SUCCESS) {
+        FAIL() << "Seal failed: " << sealer.getLastError();
+    }
+    ASSERT_EQ(SealResult::SUCCESS, seal_result);
 
     // Verify chunk is sealed
     RawChunkHeaderV16 sealed_header;

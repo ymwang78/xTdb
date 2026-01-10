@@ -333,10 +333,27 @@ ContainerResult BlockDeviceContainer::sync() {
         return ContainerResult::ERR_NOT_OPEN;
     }
 
+#ifdef _WIN32
+    // First commit any buffered data
+    if (::_commit(fd_) != 0) {
+        setError("commit failed: " + std::string(strerror(errno)));
+        return ContainerResult::ERR_SYNC_FAILED;
+    }
+    
+    // Then use FlushFileBuffers to ensure data is written to disk
+    HANDLE hFile = reinterpret_cast<HANDLE>(::_get_osfhandle(fd_));
+    if (hFile != INVALID_HANDLE_VALUE) {
+        if (::FlushFileBuffers(hFile) == 0) {
+            setError("FlushFileBuffers failed: " + std::to_string(::GetLastError()));
+            return ContainerResult::ERR_SYNC_FAILED;
+        }
+    }
+#else
     if (::fsync(fd_) < 0) {
         setError("Sync failed: " + std::string(strerror(errno)));
         return ContainerResult::ERR_SYNC_FAILED;
     }
+#endif
 
     stats_.sync_operations++;
     return ContainerResult::SUCCESS;
@@ -369,9 +386,9 @@ bool BlockDeviceContainer::isBlockDevice(const std::string& device_path) {
 }
 
 ContainerResult BlockDeviceContainer::detectDeviceProperties() {
-#ifdef __linux__
     uint64_t size_bytes = 0;
 
+#ifdef __linux__
     if (test_mode_) {
         // Test mode: Get file size using fstat
         struct stat st;
@@ -400,6 +417,22 @@ ContainerResult BlockDeviceContainer::detectDeviceProperties() {
             device_block_size_ = block_size;
         }
     }
+#elif defined(_WIN32)
+    // On Windows, block devices are regular files with fixed size
+    // Get file size using fstat (works with file descriptors)
+    struct stat st;
+    if (fstat(fd_, &st) < 0) {
+        setError("Failed to get file size: " + std::string(strerror(errno)));
+        return ContainerResult::ERR_DEVICE_NOT_FOUND;
+    }
+    size_bytes = st.st_size;
+    device_block_size_ = 4096;  // Use default 4KB for regular files on Windows
+    std::cout << "[BlockDeviceContainer] Windows: Using fixed-size file as block device, size="
+              << size_bytes << " bytes" << std::endl;
+#else
+    setError("Block device support is only available on Linux and Windows");
+    return ContainerResult::ERR_DEVICE_NOT_FOUND;
+#endif
 
     device_capacity_ = size_bytes;
 
@@ -412,10 +445,6 @@ ContainerResult BlockDeviceContainer::detectDeviceProperties() {
     }
 
     return ContainerResult::SUCCESS;
-#else
-    setError("Block device support is only available on Linux");
-    return ContainerResult::ERR_DEVICE_NOT_FOUND;
-#endif
 }
 
 ContainerResult BlockDeviceContainer::initializeNewContainer() {
