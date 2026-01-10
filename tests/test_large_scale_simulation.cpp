@@ -312,8 +312,13 @@ TEST_F(LargeScaleSimulationTest, LongTermQueryPerformance) {
     {
         auto start = high_resolution_clock::now();
         std::vector<StorageEngine::QueryPoint> results;
+        // Query range: from base_ts to base_ts + (points_per_tag - 1) * 1000 (last point timestamp)
+        // Since timestamps are base_ts + i * 1000 where i ranges from 0 to points_per_tag - 1
+        // The last point timestamp is base_ts + (points_per_tag - 1) * 1000
+        // We add 1000 to include the last point (inclusive range)
+        int64_t end_ts = base_ts + static_cast<int64_t>(points_per_tag - 1) * 1000000 + 1000;
         ASSERT_EQ(EngineResult::SUCCESS,
-                 engine.queryPoints(4000, base_ts, base_ts + points_per_tag * 1000, results));
+                 engine.queryPoints(4000, base_ts, end_ts, results));
         auto end = high_resolution_clock::now();
         auto duration = duration_cast<milliseconds>(end - start);
 

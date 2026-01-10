@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <iostream>
 #include <chrono>
+#include <map>
 #ifdef __linux__
 #include <linux/falloc.h>
 #endif
@@ -644,6 +645,14 @@ EngineResult StorageEngine::writePoint(uint32_t tag_id,
     // Add record to buffer
     TagBuffer& tag_buffer = it->second;
 
+    // CRITICAL: If buffer was just flushed (records empty), reset start_ts_us to current timestamp
+    // This ensures each block gets the correct start timestamp after flush
+    // After flush, buffer is cleared but start_ts_us is not reset, so we need to reset it here
+    if (tag_buffer.records.empty()) {
+        // Buffer was just flushed, reset start_ts_us to current point's timestamp
+        tag_buffer.start_ts_us = timestamp_us;
+    }
+
     // Create MemRecord
     MemRecord record;
     record.time_offset = static_cast<uint32_t>((timestamp_us - tag_buffer.start_ts_us) / 1000);  // Convert to ms
@@ -744,6 +753,20 @@ EngineResult StorageEngine::writePoint(const TagConfig* config,
 
     // Add record to buffer
     TagBuffer& tag_buffer = it->second;
+
+    // CRITICAL: If buffer was just flushed (records empty), reset start_ts_us to current timestamp
+    // This ensures each block gets the correct start timestamp after flush
+    // After flush, buffer is cleared but start_ts_us is not reset, so we need to reset it here
+    if (tag_buffer.records.empty()) {
+        // Buffer was just flushed, reset start_ts_us to current point's timestamp
+        tag_buffer.start_ts_us = timestamp_us;
+        // Also restore encoding configuration if needed
+        tag_buffer.value_type = config->value_type;
+        tag_buffer.time_unit = config->time_unit;
+        tag_buffer.encoding_type = config->encoding_type;
+        tag_buffer.encoding_tolerance = config->encoding_param1;
+        tag_buffer.encoding_compression_factor = config->encoding_param2;
+    }
 
     // Create MemRecord
     MemRecord record;
@@ -902,8 +925,10 @@ EngineResult StorageEngine::flush() {
                 // memory issues during vector reallocation
                 buffers_to_flush.emplace_back(tag_id, std::move(tag_buffer));
                 // Re-initialize the moved-from buffer for reuse
+                // Note: start_ts_us will be reset in writePoint() when records.empty() is detected
                 tag_buffer = TagBuffer();
                 tag_buffer.tag_id = tag_id;  // Restore tag_id for future use
+                // start_ts_us will be reset to the next point's timestamp in writePoint()
             }
         }
     }  // Release buffers lock
@@ -948,6 +973,23 @@ EngineResult StorageEngine::flush() {
             }
 
             write_stats_.chunks_sealed++;
+
+            // Sync sealed chunk metadata to SQLite before allocating new chunk
+            // This ensures queryPoints can find blocks in sealed chunks
+            uint64_t sealed_chunk_offset = active_chunk_.chunk_offset;
+            RawScanner scanner(io_);
+            ScannedChunk scanned_chunk;
+            ScanResult scan_result = scanner.scanChunk(sealed_chunk_offset,
+                                                     config_.layout,
+                                                     scanned_chunk);
+            if (scan_result == ScanResult::SUCCESS && metadata_) {
+                SyncResult sync_result = metadata_->syncChunk(sealed_chunk_offset,
+                                                             scanned_chunk);
+                if (sync_result != SyncResult::SUCCESS) {
+                    // Log error but continue - metadata sync failure should not block writes
+                    // setError("Failed to sync sealed chunk metadata: " + metadata_->getLastError());
+                }
+            }
 
             // Allocate new chunk at next position
             uint64_t new_chunk_offset = active_chunk_.chunk_offset +
@@ -1181,115 +1223,197 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
     }  // Release buffers lock before disk I/O
 
     // Step 2: Read from disk blocks (Phase 4: Parallel)
-    // Acquire shared lock for thread-safe active_chunk reading
-    uint64_t chunk_offset;
-    uint32_t blocks_used;
-    {
-        std::lock_guard<std::mutex> lock(active_chunk_mutex_);
-        chunk_offset = active_chunk_.chunk_offset;
-        blocks_used = active_chunk_.blocks_used;
+    // Use metadata to find all blocks matching the query, including sealed chunks
+    std::vector<BlockQueryResult> blocks_from_metadata;
+    if (metadata_) {
+        SyncResult metadata_result = metadata_->queryBlocksByTagAndTime(
+            tag_id, start_ts_us, end_ts_us, blocks_from_metadata);
+        // Continue even if metadata query fails (may not have metadata for active chunk yet)
     }
 
-    if (blocks_used > 0) {
-        // Step 2.1: Scan directory to find matching blocks
-        RawScanner scanner(io_);
-        ScannedChunk scanned_chunk;
+    // Step 2.1: Also check active chunk (may not be in metadata yet)
+    // Use DirectoryBuilder to read active chunk blocks directly (includes unsealed blocks)
+    uint64_t active_chunk_offset;
+    uint32_t active_blocks_used;
+    {
+        std::lock_guard<std::mutex> lock(active_chunk_mutex_);
+        active_chunk_offset = active_chunk_.chunk_offset;
+        active_blocks_used = active_chunk_.blocks_used;
+    }
 
-        ScanResult scan_result = scanner.scanChunk(chunk_offset,
-                                                   config_.layout,
-                                                   scanned_chunk);
-
-        if (scan_result == ScanResult::SUCCESS) {
-            // Step 2.2: Filter blocks by tag and time range
-            std::vector<ScannedBlock> blocks_to_read;
-            for (const auto& block_info : scanned_chunk.blocks) {
-                if (block_info.tag_id != tag_id) {
+    std::vector<ScannedBlock> blocks_from_active_chunk;
+    if (active_blocks_used > 0 && dir_builder_) {
+        // IMPORTANT: Reload directory from disk to ensure we have the latest entries
+        // The DirectoryBuilder may have been modified in memory, but we need to read
+        // the actual on-disk directory to get all blocks
+        // Note: This is safe because we're reading only, not modifying
+        DirBuildResult reload_result = dir_builder_->load();
+        if (reload_result == DirBuildResult::SUCCESS) {
+            // Read directory entries from DirectoryBuilder (now loaded from disk)
+            // CRITICAL: We need to iterate over ALL possible blocks, not just active_blocks_used
+            // because active_blocks_used may be reset when chunk rotates, but we need to find
+            // all blocks that match the query criteria. However, active_blocks_used tells us
+            // the maximum number of blocks that have been written, so we use it as an upper bound
+            // But we also need to check if blocks are actually sealed (record_count != 0xFFFFFFFF)
+            for (uint32_t block_index = 0; block_index < config_.layout.data_blocks; block_index++) {
+                const BlockDirEntryV16* entry = dir_builder_->getEntry(block_index);
+                if (!entry) {
                     continue;
                 }
 
-                if (block_info.end_ts_us < start_ts_us ||
-                    block_info.start_ts_us > end_ts_us) {
-                    continue;
+                // Check if block is sealed (has valid data)
+                // Only query sealed blocks (record_count != 0xFFFFFFFF means block has data)
+                if (entry->record_count == 0xFFFFFFFFu) {
+                    continue;  // Block not sealed yet, skip
                 }
 
-                blocks_to_read.push_back(block_info);
+                // Check tag match
+                if (entry->tag_id != tag_id) {
+                    continue;  // Different tag, skip
+                }
+
+                // Check time range
+                int64_t block_start_ts = entry->start_ts_us;
+                int64_t block_end_ts = entry->end_ts_us;
+
+                if (block_end_ts < start_ts_us || block_start_ts > end_ts_us) {
+                    continue;  // Time range doesn't match
+                }
+
+                // Create ScannedBlock from directory entry
+                ScannedBlock block;
+                block.block_index = block_index;
+                block.tag_id = entry->tag_id;
+                block.start_ts_us = block_start_ts;
+                block.end_ts_us = block_end_ts;
+                block.time_unit = static_cast<TimeUnit>(entry->time_unit);
+                block.value_type = static_cast<ValueType>(entry->value_type);
+                block.record_count = entry->record_count;
+                block.data_crc32 = entry->data_crc32;
+                block.is_sealed = true;  // Blocks from DirectoryBuilder are sealed (record_count != 0xFFFFFFFF)
+
+                blocks_from_active_chunk.push_back(block);
             }
+        }
+        // If reload fails, we'll just skip active chunk blocks (they may not be written to disk yet)
+        // and rely on metadata for sealed chunks
+    }
 
-            // Step 2.3: Parallel block reading using thread pool
-            if (!blocks_to_read.empty()) {
-                struct BlockReadResult {
-                    bool success;
-                    std::vector<QueryPoint> points;
-                    std::string error_msg;
-                };
+    // Step 2.2: Combine blocks from metadata and active chunk, removing duplicates
+    // Use a map to store block info with chunk_offset for proper deduplication
+    struct BlockWithChunk {
+        ScannedBlock block;
+        uint64_t chunk_offset;
+    };
+    std::map<std::pair<uint64_t, uint32_t>, BlockWithChunk> blocks_map;  // key: (chunk_offset, block_index)
+    
+    // Add blocks from metadata (sealed chunks)
+    for (const auto& meta_block : blocks_from_metadata) {
+        ScannedBlock block;
+        block.block_index = meta_block.block_index;
+        block.tag_id = meta_block.tag_id;
+        block.start_ts_us = meta_block.start_ts_us;
+        block.end_ts_us = meta_block.end_ts_us;
+        block.time_unit = meta_block.time_unit;
+        block.value_type = meta_block.value_type;
+        block.record_count = meta_block.record_count;
+        block.data_crc32 = 0;  // Not needed for reading
+        block.is_sealed = true;  // Blocks from metadata are from sealed chunks
+        
+        blocks_map[{meta_block.chunk_offset, meta_block.block_index}] = {block, meta_block.chunk_offset};
+    }
 
-                std::vector<std::future<BlockReadResult>> read_futures;
-                read_futures.reserve(blocks_to_read.size());
+    // Add blocks from active chunk (avoid duplicates by checking chunk_offset and block_index)
+    for (const auto& active_block : blocks_from_active_chunk) {
+        auto key = std::make_pair(active_chunk_offset, active_block.block_index);
+        if (blocks_map.find(key) == blocks_map.end()) {
+            // Not a duplicate, add it
+            BlockWithChunk block_with_chunk;
+            block_with_chunk.block = active_block;
+            block_with_chunk.chunk_offset = active_chunk_offset;
+            blocks_map[key] = block_with_chunk;
+        }
+    }
+    
+    // Convert map to vector for processing
+    std::vector<std::pair<ScannedBlock, uint64_t>> blocks_to_read;
+    for (const auto& [key, block_with_chunk] : blocks_map) {
+        blocks_to_read.push_back({block_with_chunk.block, block_with_chunk.chunk_offset});
+    }
 
-                for (const auto& block_info : blocks_to_read) {
-                    // Get per-thread I/O instance
-                    size_t io_index = next_io_index_.fetch_add(1) % io_pool_.size();
-                    AlignedIO* thread_io = io_pool_[io_index].get();
+    // Step 2.3: Parallel block reading using thread pool
+    if (!blocks_to_read.empty()) {
+        struct BlockReadResult {
+            bool success;
+            std::vector<QueryPoint> points;
+            std::string error_msg;
+        };
 
-                    // Submit block read task
-                    auto future = flush_pool_->submit([this, chunk_offset, block_info,
-                                                       thread_io, start_ts_us, end_ts_us]() -> BlockReadResult {
-                        BlockReadResult result;
-                        result.success = false;
+        std::vector<std::future<BlockReadResult>> read_futures;
+        read_futures.reserve(blocks_to_read.size());
 
-                        // Read block using per-thread BlockReader
-                        BlockReader reader(thread_io, config_.layout);
+        for (const auto& [block_info, block_chunk_offset] : blocks_to_read) {
+            // Get per-thread I/O instance
+            size_t io_index = next_io_index_.fetch_add(1) % io_pool_.size();
+            AlignedIO* thread_io = io_pool_[io_index].get();
 
-                        std::vector<MemRecord> records;
-                        ReadResult read_result = reader.readBlock(
-                            chunk_offset,
-                            block_info.block_index,
-                            block_info.tag_id,
-                            block_info.start_ts_us,
-                            block_info.time_unit,
-                            block_info.value_type,
-                            block_info.record_count,
-                            records
-                        );
+            // Submit block read task (capture block_chunk_offset by value)
+            auto future = flush_pool_->submit([this, block_chunk_offset, block_info,
+                                               thread_io, start_ts_us, end_ts_us]() -> BlockReadResult {
+                BlockReadResult result;
+                result.success = false;
 
-                        if (read_result != ReadResult::SUCCESS) {
-                            result.error_msg = "Failed to read block";
-                            return result;
-                        }
+                // Read block using per-thread BlockReader
+                BlockReader reader(thread_io, config_.layout);
 
-                        // Filter and convert records to QueryPoint
-                        for (const auto& record : records) {
-                            int64_t timestamp_us = block_info.start_ts_us +
-                                                 static_cast<int64_t>(record.time_offset) * 1000;
+                std::vector<MemRecord> records;
+                ReadResult read_result = reader.readBlock(
+                    block_chunk_offset,
+                    block_info.block_index,
+                    block_info.tag_id,
+                    block_info.start_ts_us,
+                    block_info.time_unit,
+                    block_info.value_type,
+                    block_info.record_count,
+                    records
+                );
 
-                            if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
-                                result.points.emplace_back(timestamp_us,
-                                                          record.value.f64_value,
-                                                          record.quality);
-                            }
-                        }
-
-                        result.success = true;
-                        return result;
-                    });
-
-                    read_futures.push_back(std::move(future));
+                if (read_result != ReadResult::SUCCESS) {
+                    result.error_msg = "Failed to read block";
+                    return result;
                 }
 
-                // Step 2.4: Wait for all reads and aggregate results
-                for (auto& future : read_futures) {
-                    BlockReadResult read_result = future.get();
+                // Filter and convert records to QueryPoint
+                for (const auto& record : records) {
+                    int64_t timestamp_us = block_info.start_ts_us +
+                                         static_cast<int64_t>(record.time_offset) * 1000;
 
-                    if (read_result.success) {
-                        read_stats_.blocks_read++;
-                        read_stats_.points_read_disk += read_result.points.size();
-
-                        // Append results
-                        results.insert(results.end(),
-                                      read_result.points.begin(),
-                                      read_result.points.end());
+                    if (timestamp_us >= start_ts_us && timestamp_us <= end_ts_us) {
+                        result.points.emplace_back(timestamp_us,
+                                                  record.value.f64_value,
+                                                  record.quality);
                     }
                 }
+
+                result.success = true;
+                return result;
+            });
+
+            read_futures.push_back(std::move(future));
+        }
+
+        // Step 2.4: Wait for all reads and aggregate results
+        for (auto& future : read_futures) {
+            BlockReadResult read_result = future.get();
+
+            if (read_result.success) {
+                read_stats_.blocks_read++;
+                read_stats_.points_read_disk += read_result.points.size();
+
+                // Append results
+                results.insert(results.end(),
+                              read_result.points.begin(),
+                              read_result.points.end());
             }
         }
     }
