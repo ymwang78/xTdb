@@ -1229,6 +1229,11 @@ EngineResult StorageEngine::queryPoints(uint32_t tag_id,
         SyncResult metadata_result = metadata_->queryBlocksByTagAndTime(
             tag_id, start_ts_us, end_ts_us, blocks_from_metadata);
         // Continue even if metadata query fails (may not have metadata for active chunk yet)
+        if (metadata_result != SyncResult::SUCCESS) {
+            // Log warning but continue
+            std::cerr << "[StorageEngine] Warning: Metadata query failed: "
+                      << metadata_->getLastError() << std::endl;
+        }
     }
 
     // Step 2.1: Also check active chunk (may not be in metadata yet)
