@@ -251,6 +251,206 @@ enum class EncodingType : uint8_t {
 };
 
 // ============================================================================
+// CompressionType - General-purpose compression for COMPACT archive
+// ============================================================================
+
+enum class CompressionType : uint8_t {
+    COMP_NONE  = 0,  // No compression
+    COMP_ZSTD  = 1,  // Zstandard compression (recommended)
+    COMP_LZ4   = 2,  // LZ4 compression (fast)
+    COMP_ZLIB  = 3,  // Zlib/Gzip compression (compatible)
+    COMP_RESERVED_4 = 4,  // Reserved for future use
+    COMP_RESERVED_5 = 5,  // Reserved for future use
+    COMP_RESERVED_6 = 6,  // Reserved for future use
+    COMP_RESERVED_7 = 7   // Reserved for future use
+};
+
+// ============================================================================
+// COMPACT Archive Structures
+// ============================================================================
+
+// COMPACT Chunk Magic Number
+constexpr char kCompactChunkMagic[8] = {'X', 'T', 'C', 'P', 'T', 'C', 'K', '\0'};  // "XTCPTCK"
+
+// COMPACT Chunk Header Version
+constexpr uint16_t kCompactChunkVersion = 0x0001;  // Version 1.0
+
+#pragma pack(push, 1)
+
+/// Compact Chunk Header (128 bytes, same size as RawChunkHeaderV16 for alignment)
+/// Located at the beginning of each COMPACT chunk
+struct CompactChunkHeader {
+    char     magic[8];               // "XTCPTCK" - COMPACT chunk identifier
+    uint16_t version;                // = 0x0001 (Version 1.0)
+    uint16_t header_size;            // sizeof(CompactChunkHeader) = 128
+
+    uint8_t  db_instance_id[16];     // Database instance ID (for validation)
+
+    uint32_t chunk_id;               // Chunk ID (corresponds to RAW chunk_id)
+    uint32_t flags;                  // Chunk state flags (same as RawChunkHeaderV16)
+
+    uint32_t block_count;            // Number of compressed blocks in this chunk
+    uint8_t  compression_type;       // CompressionType used for all blocks
+    uint8_t  reserved_u8[3];         // Reserved for alignment
+
+    uint64_t index_offset;           // Offset to block index array (from chunk start)
+    uint64_t data_offset;            // Offset to compressed data region (from chunk start)
+
+    uint64_t total_compressed_size;  // Total size of all compressed blocks (bytes)
+    uint64_t total_original_size;    // Total size before compression (bytes)
+
+    int64_t  start_ts_us;            // Minimum timestamp in chunk
+    int64_t  end_ts_us;              // Maximum timestamp in chunk
+
+    uint32_t super_crc32;            // CRC32 of index region (for integrity)
+    uint32_t reserved1;
+
+    // Padding to reach 128 bytes
+    uint8_t  padding[128 - 8 - 2 - 2 - 16 - 4 - 4 - 4 - 4 - 8 - 8 - 8 - 8 - 8 - 8 - 4 - 4];
+
+    // Constructor: initialize to safe defaults
+    CompactChunkHeader() {
+        std::memcpy(magic, kCompactChunkMagic, 8);
+        version = kCompactChunkVersion;
+        header_size = sizeof(CompactChunkHeader);
+        std::memset(db_instance_id, 0, 16);
+        chunk_id = 0;
+        flags = kChunkFlagsInit;
+        block_count = 0;
+        compression_type = static_cast<uint8_t>(CompressionType::COMP_ZSTD);
+        std::memset(reserved_u8, 0, 3);
+        index_offset = 0;
+        data_offset = 0;
+        total_compressed_size = 0;
+        total_original_size = 0;
+        start_ts_us = 0;
+        end_ts_us = 0;
+        super_crc32 = 0;
+        reserved1 = 0;
+        std::memset(padding, 0, sizeof(padding));
+    }
+};
+
+// Verify struct size
+static_assert(sizeof(CompactChunkHeader) == 128,
+              "CompactChunkHeader must be exactly 128 bytes");
+
+/// Compact Block Index Entry (80 bytes)
+/// One entry per compressed block, stored in the index region
+struct CompactBlockIndex {
+    uint32_t tag_id;                 // Tag ID
+    uint32_t original_block_index;   // Original RAW block index
+
+    uint64_t data_offset;            // Offset to compressed data (from chunk data_offset)
+    uint32_t compressed_size;        // Compressed block size (bytes)
+    uint32_t original_size;          // Original RAW block size (bytes)
+
+    int64_t  start_ts_us;            // Block start timestamp
+    int64_t  end_ts_us;              // Block end timestamp
+
+    uint32_t record_count;           // Number of records in block
+    uint8_t  original_encoding;      // Original EncodingType (from RAW block)
+    uint8_t  value_type;             // ValueType (VT_BOOL/I32/F32/F64)
+    uint8_t  time_unit;              // TimeUnit
+    uint8_t  reserved_u8;            // Reserved for alignment
+
+    uint32_t block_crc32;            // CRC32 of compressed data
+    uint32_t reserved1;
+
+    // Padding to reach 80 bytes
+    uint8_t  padding[80 - 4 - 4 - 8 - 4 - 4 - 8 - 8 - 4 - 4 - 4 - 4];
+
+    // Constructor
+    CompactBlockIndex() {
+        tag_id = 0;
+        original_block_index = 0;
+        data_offset = 0;
+        compressed_size = 0;
+        original_size = 0;
+        start_ts_us = 0;
+        end_ts_us = 0;
+        record_count = 0;
+        original_encoding = static_cast<uint8_t>(EncodingType::ENC_RAW);
+        value_type = static_cast<uint8_t>(ValueType::VT_F64);
+        time_unit = static_cast<uint8_t>(TimeUnit::TU_US);
+        reserved_u8 = 0;
+        block_crc32 = 0;
+        reserved1 = 0;
+        std::memset(padding, 0, sizeof(padding));
+    }
+};
+
+// Verify struct size
+static_assert(sizeof(CompactBlockIndex) == 80,
+              "CompactBlockIndex must be exactly 80 bytes");
+
+#pragma pack(pop)
+
+// ============================================================================
+// COMPACT Helper Functions
+// ============================================================================
+
+/// Calculate COMPACT chunk size (in bytes)
+/// @param block_count Number of blocks in chunk
+/// @return Total chunk size including header, index, and data regions
+inline uint64_t calculateCompactChunkSize(uint32_t block_count, uint64_t total_data_size) {
+    uint64_t header_size = sizeof(CompactChunkHeader);
+    uint64_t index_size = static_cast<uint64_t>(block_count) * sizeof(CompactBlockIndex);
+    return header_size + index_size + total_data_size;
+}
+
+/// Get index region offset (right after header)
+inline uint64_t getCompactIndexOffset() {
+    return sizeof(CompactChunkHeader);
+}
+
+/// Get data region offset
+/// @param block_count Number of blocks
+/// @return Offset to data region
+inline uint64_t getCompactDataOffset(uint32_t block_count) {
+    return sizeof(CompactChunkHeader) +
+           static_cast<uint64_t>(block_count) * sizeof(CompactBlockIndex);
+}
+
+/// Validate COMPACT chunk header
+/// @param header Chunk header to validate
+/// @return true if valid
+inline bool validateCompactChunkHeader(const CompactChunkHeader& header) {
+    if (std::memcmp(header.magic, kCompactChunkMagic, 8) != 0) {
+        return false;
+    }
+    if (header.version != kCompactChunkVersion) {
+        return false;
+    }
+    if (header.header_size != sizeof(CompactChunkHeader)) {
+        return false;
+    }
+    return true;
+}
+
+/// Calculate compression ratio
+/// @param original_size Original size before compression
+/// @param compressed_size Compressed size
+/// @return Compression ratio (0.0 to 1.0, lower is better)
+inline double calculateCompressionRatio(uint64_t original_size, uint64_t compressed_size) {
+    if (original_size == 0) {
+        return 0.0;
+    }
+    return static_cast<double>(compressed_size) / static_cast<double>(original_size);
+}
+
+/// Calculate space savings
+/// @param original_size Original size before compression
+/// @param compressed_size Compressed size
+/// @return Space savings percentage (0.0 to 100.0)
+inline double calculateSpaceSavings(uint64_t original_size, uint64_t compressed_size) {
+    if (original_size == 0) {
+        return 0.0;
+    }
+    return 100.0 * (1.0 - calculateCompressionRatio(original_size, compressed_size));
+}
+
+// ============================================================================
 // BlockDirEntryV16 (64 bytes, expanded from 48 bytes)
 // ============================================================================
 
