@@ -6,7 +6,7 @@
 
 **现状**：
 
-- RAW 阶段：固定大小的 block（16K/64K/256K），可能已使用 Swinging Door 或 16-bit 量化压缩
+- RAW 阶段：固定大小的 block（16K/64K/256K），可能已使用 Swinging Door 或（和） 16-bit 量化压缩
 - 归档需求：将 RAW 数据压缩归档，节省长期存储空间
 - 查询需求：需要支持从 RAW 或 COMPACT 读取数据
 
@@ -18,6 +18,7 @@
 
 **归档策略**:
 
+- RAW和COMPACT的container分离，如果是文件形式的, 以不同后缀.raw, .cpt区分
 - 保持1到2天(可配置)的当前数据，以RAW形式存储
 - 启动后台线程对旧数据以block为单位进行压缩归档，确保整个过程是可恢复的（中断后可恢复或者可重做）
 - 完成压缩存储的block在meta（sqlite）里只需要修改对应记录的chunkid和block offset
