@@ -16,6 +16,13 @@
 - COMPACT_VAR 阶段：将每个 RAW block 单独压缩归档（1:1 映射），使用通用压缩（zlib/gzip）
 - 不合并 block：保持 block 级别的映射关系，metadata 结构清晰
 
+**归档策略**:
+
+- 保持1到2天(可配置)的当前数据，以RAW形式存储
+- 启动后台线程对旧数据以block为单位进行压缩归档，确保整个过程是可恢复的（中断后可恢复或者可重做）
+- 完成压缩存储的block在meta（sqlite）里只需要修改对应记录的chunkid和block offset
+- 回收对应的RAW block
+
 ---
 
 ## 架构设计
