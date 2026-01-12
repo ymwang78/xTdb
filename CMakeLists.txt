@@ -102,6 +102,7 @@ add_library(xtdb_core
     src/compressor.cpp
     src/compressor_zstd.cpp
     src/compact_container.cpp
+    src/compact_archiver.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -526,8 +527,20 @@ if(BUILD_TESTS)
     )
     add_test(NAME CompactContainerTest COMMAND test_compact_container)
 
+    # Test: Compact Archiver (T31 - Phase 18)
+    add_executable(test_compact_archiver
+        tests/test_compact_archiver.cpp
+    )
+    target_link_libraries(test_compact_archiver
+        xtdb_core
+        GTest::gtest
+        GTest::gtest_main
+        ${THREAD_LIB}
+    )
+    add_test(NAME CompactArchiverTest COMMAND test_compact_archiver)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk, test_compression_integration, test_multi_resolution_query, test_performance_benchmark, test_crash_recovery, test_large_scale_simulation, test_rotating_wal, test_container_abstraction, test_block_device_integration, test_block_device_advanced, test_compressor, test_compact_struct, test_compact_container")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk, test_compression_integration, test_multi_resolution_query, test_performance_benchmark, test_crash_recovery, test_large_scale_simulation, test_rotating_wal, test_container_abstraction, test_block_device_integration, test_block_device_advanced, test_compressor, test_compact_struct, test_compact_container, test_compact_archiver")
 endif()
 
 # ============================================================================
