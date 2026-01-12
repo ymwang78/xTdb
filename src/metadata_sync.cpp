@@ -307,7 +307,7 @@ SyncResult MetadataSync::queryBlocksByTagAndTime(uint32_t tag_id,
         SELECT chunk_id, block_index, tag_id, start_ts_us, end_ts_us,
                time_unit, value_type, record_count, chunk_offset
         FROM blocks
-        WHERE tag_id = ? AND start_ts_us <= ? AND end_ts_us >= ?
+        WHERE tag_id = ? AND start_ts_us <= ? AND end_ts_us >= ? AND container_id = 0
         ORDER BY start_ts_us;
     )";
 
@@ -491,6 +491,55 @@ SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
     return SyncResult::SUCCESS;
 }
 
+SyncResult MetadataSync::queryBlockMetadata(uint32_t container_id,
+                                           uint32_t chunk_id,
+                                           uint32_t block_index,
+                                           BlockQueryResult& result) {
+    const char* sql = R"(
+        SELECT chunk_id, block_index, tag_id, start_ts_us, end_ts_us,
+               time_unit, value_type, record_count, chunk_offset
+        FROM blocks
+        WHERE container_id = ? AND chunk_id = ? AND block_index = ?
+        LIMIT 1;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare block metadata query: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_PREPARE_FAILED;
+    }
+
+    sqlite3_bind_int(stmt, 1, container_id);
+    sqlite3_bind_int(stmt, 2, chunk_id);
+    sqlite3_bind_int(stmt, 3, block_index);
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        result.chunk_id = sqlite3_column_int(stmt, 0);
+        result.block_index = sqlite3_column_int(stmt, 1);
+        result.tag_id = sqlite3_column_int(stmt, 2);
+        result.start_ts_us = sqlite3_column_int64(stmt, 3);
+        result.end_ts_us = sqlite3_column_int64(stmt, 4);
+        result.time_unit = static_cast<TimeUnit>(sqlite3_column_int(stmt, 5));
+        result.value_type = static_cast<ValueType>(sqlite3_column_int(stmt, 6));
+        result.record_count = sqlite3_column_int(stmt, 7);
+        result.chunk_offset = sqlite3_column_int64(stmt, 8);
+
+        sqlite3_finalize(stmt);
+        return SyncResult::SUCCESS;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE) {
+        setError("Block not found in metadata");
+        return SyncResult::ERR_INVALID_DATA;
+    }
+
+    setError("Block metadata query failed: " + std::string(sqlite3_errmsg(db_)));
+    return SyncResult::ERR_DB_EXEC_FAILED;
+}
+
 // ============================================================================
 // Phase 18/19: COMPACT Archive Support
 // ============================================================================
@@ -642,6 +691,57 @@ SyncResult MetadataSync::queryBlocksForArchive(uint32_t raw_container_id,
     }
 
     return SyncResult::SUCCESS;
+}
+
+SyncResult MetadataSync::queryBlockArchiveStatus(uint32_t container_id,
+                                                uint32_t chunk_id,
+                                                uint32_t block_index,
+                                                bool& is_archived,
+                                                uint32_t& archived_to_container_id,
+                                                uint32_t& archived_to_block_index) {
+    const char* sql = R"(
+        SELECT is_archived, archived_to_container_id, archived_to_block_index
+        FROM blocks
+        WHERE container_id = ? AND chunk_id = ? AND block_index = ?
+        LIMIT 1;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare archive status query: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_PREPARE_FAILED;
+    }
+
+    sqlite3_bind_int(stmt, 1, container_id);
+    sqlite3_bind_int(stmt, 2, chunk_id);
+    sqlite3_bind_int(stmt, 3, block_index);
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        is_archived = sqlite3_column_int(stmt, 0) != 0;
+        if (is_archived) {
+            archived_to_container_id = sqlite3_column_int(stmt, 1);
+            archived_to_block_index = sqlite3_column_int(stmt, 2);
+        } else {
+            archived_to_container_id = 0;
+            archived_to_block_index = 0;
+        }
+        sqlite3_finalize(stmt);
+        return SyncResult::SUCCESS;
+    }
+
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE) {
+        // Block not found in metadata - treat as not archived
+        is_archived = false;
+        archived_to_container_id = 0;
+        archived_to_block_index = 0;
+        return SyncResult::SUCCESS;
+    }
+
+    setError("Archive status query failed: " + std::string(sqlite3_errmsg(db_)));
+    return SyncResult::ERR_DB_EXEC_FAILED;
 }
 
 }  // namespace xtdb

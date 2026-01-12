@@ -103,6 +103,17 @@ public:
     /// @return SyncResult
     SyncResult getAllTags(std::vector<uint32_t>& tag_ids);
 
+    /// Query single block metadata by location
+    /// @param container_id Container ID
+    /// @param chunk_id Chunk ID
+    /// @param block_index Block index
+    /// @param result Output: block metadata
+    /// @return SyncResult
+    SyncResult queryBlockMetadata(uint32_t container_id,
+                                  uint32_t chunk_id,
+                                  uint32_t block_index,
+                                  BlockQueryResult& result);
+
     // ========================================================================
     // Phase 18/19: COMPACT Archive Support
     // ========================================================================
@@ -157,6 +168,21 @@ public:
     SyncResult queryBlocksForArchive(uint32_t raw_container_id,
                                     int64_t min_age_seconds,
                                     std::vector<BlockQueryResult>& results);
+
+    /// Query block archive status
+    /// @param container_id Container ID
+    /// @param chunk_id Chunk ID
+    /// @param block_index Block index
+    /// @param is_archived Output: true if archived
+    /// @param archived_to_container_id Output: COMPACT container ID (if archived)
+    /// @param archived_to_block_index Output: COMPACT block index (if archived)
+    /// @return SyncResult
+    SyncResult queryBlockArchiveStatus(uint32_t container_id,
+                                      uint32_t chunk_id,
+                                      uint32_t block_index,
+                                      bool& is_archived,
+                                      uint32_t& archived_to_container_id,
+                                      uint32_t& archived_to_block_index);
 
     // ========================================================================
     // Phase 10: Retention Service Support

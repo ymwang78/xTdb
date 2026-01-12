@@ -104,6 +104,7 @@ add_library(xtdb_core
     src/compact_container.cpp
     src/compact_archiver.cpp
     src/compact_archive_manager.cpp
+    src/block_accessor.cpp
 )
 
 target_include_directories(xtdb_core PUBLIC
@@ -552,8 +553,19 @@ if(BUILD_TESTS)
     )
     add_test(NAME ArchiveWorkflowTest COMMAND test_archive_workflow)
 
+    # Phase 5: Query Routing - BlockAccessor Tests
+    add_executable(test_block_accessor tests/test_block_accessor.cpp)
+    target_link_libraries(test_block_accessor PRIVATE
+        xtdb_core
+        SQLite::SQLite3
+        GTest::gtest
+        GTest::gtest_main
+        ${THREAD_LIB}
+    )
+    add_test(NAME BlockAccessorTest COMMAND test_block_accessor)
+
     # Summary
-    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk, test_compression_integration, test_multi_resolution_query, test_performance_benchmark, test_crash_recovery, test_large_scale_simulation, test_rotating_wal, test_container_abstraction, test_block_device_integration, test_block_device_advanced, test_compressor, test_compact_struct, test_compact_container, test_compact_archiver, test_archive_workflow")
+    message(STATUS "Tests enabled: test_alignment, test_layout, test_struct_size, test_state_machine, test_write_path, test_seal_directory, test_read_recovery, test_end_to_end, test_restart_consistency, test_write_coordinator, test_read_coordinator, test_maintenance, test_swinging_door, test_compression_e2e, test_quantized_16, test_resampling, test_small_chunk, test_compression_integration, test_multi_resolution_query, test_performance_benchmark, test_crash_recovery, test_large_scale_simulation, test_rotating_wal, test_container_abstraction, test_block_device_integration, test_block_device_advanced, test_compressor, test_compact_struct, test_compact_container, test_compact_archiver, test_archive_workflow, test_block_accessor")
 endif()
 
 # ============================================================================
