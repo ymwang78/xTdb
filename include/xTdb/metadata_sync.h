@@ -104,6 +104,61 @@ public:
     SyncResult getAllTags(std::vector<uint32_t>& tag_ids);
 
     // ========================================================================
+    // Phase 18/19: COMPACT Archive Support
+    // ========================================================================
+
+    /// Sync a COMPACT block to database
+    /// @param container_id COMPACT container ID
+    /// @param block_index COMPACT block index
+    /// @param tag_id Tag ID
+    /// @param original_chunk_id Original RAW chunk ID
+    /// @param original_block_index Original RAW block index
+    /// @param start_ts_us Start timestamp
+    /// @param end_ts_us End timestamp
+    /// @param record_count Number of records
+    /// @param original_encoding Original encoding type (from RAW)
+    /// @param value_type Value type
+    /// @param time_unit Time unit
+    /// @param original_size Original RAW block size
+    /// @param compressed_size Compressed size in COMPACT
+    /// @return SyncResult
+    SyncResult syncCompactBlock(uint32_t container_id,
+                               uint32_t block_index,
+                               uint32_t tag_id,
+                               uint32_t original_chunk_id,
+                               uint32_t original_block_index,
+                               int64_t start_ts_us,
+                               int64_t end_ts_us,
+                               uint32_t record_count,
+                               EncodingType original_encoding,
+                               ValueType value_type,
+                               TimeUnit time_unit,
+                               uint32_t original_size,
+                               uint32_t compressed_size);
+
+    /// Mark a RAW block as archived
+    /// @param raw_container_id RAW container ID
+    /// @param chunk_id RAW chunk ID
+    /// @param block_index RAW block index
+    /// @param archived_to_container_id COMPACT container ID
+    /// @param archived_to_block_index COMPACT block index
+    /// @return SyncResult
+    SyncResult markBlockAsArchived(uint32_t raw_container_id,
+                                  uint32_t chunk_id,
+                                  uint32_t block_index,
+                                  uint32_t archived_to_container_id,
+                                  uint32_t archived_to_block_index);
+
+    /// Query blocks available for archiving
+    /// @param raw_container_id RAW container ID
+    /// @param min_age_seconds Minimum age in seconds (blocks older than this)
+    /// @param results Output: blocks ready for archiving
+    /// @return SyncResult
+    SyncResult queryBlocksForArchive(uint32_t raw_container_id,
+                                    int64_t min_age_seconds,
+                                    std::vector<BlockQueryResult>& results);
+
+    // ========================================================================
     // Phase 10: Retention Service Support
     // ========================================================================
 

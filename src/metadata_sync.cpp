@@ -1,5 +1,6 @@
 #include "xTdb/metadata_sync.h"
 #include <cstring>
+#include <chrono>
 
 namespace xtdb {
 
@@ -67,7 +68,7 @@ SyncResult MetadataSync::initSchema() {
         return result;
     }
 
-    // Create blocks table
+    // Create blocks table (extended for COMPACT archive support)
     std::string create_blocks = R"(
         CREATE TABLE IF NOT EXISTS blocks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,6 +81,15 @@ SyncResult MetadataSync::initSchema() {
             value_type INTEGER NOT NULL,
             record_count INTEGER NOT NULL,
             chunk_offset INTEGER NOT NULL,
+            container_id INTEGER NOT NULL DEFAULT 0,
+            is_archived INTEGER NOT NULL DEFAULT 0,
+            archived_to_container_id INTEGER,
+            archived_to_block_index INTEGER,
+            original_chunk_id INTEGER,
+            original_block_index INTEGER,
+            encoding_type INTEGER DEFAULT 0,
+            original_size INTEGER DEFAULT 0,
+            compressed_size INTEGER DEFAULT 0,
             FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id)
         );
     )";
@@ -89,10 +99,24 @@ SyncResult MetadataSync::initSchema() {
         return result;
     }
 
+    // Migrate existing tables if necessary (add new columns)
+    // SQLite will ignore ALTER TABLE if column already exists
+    executeSql("ALTER TABLE blocks ADD COLUMN container_id INTEGER NOT NULL DEFAULT 0;");
+    executeSql("ALTER TABLE blocks ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0;");
+    executeSql("ALTER TABLE blocks ADD COLUMN archived_to_container_id INTEGER;");
+    executeSql("ALTER TABLE blocks ADD COLUMN archived_to_block_index INTEGER;");
+    executeSql("ALTER TABLE blocks ADD COLUMN original_chunk_id INTEGER;");
+    executeSql("ALTER TABLE blocks ADD COLUMN original_block_index INTEGER;");
+    executeSql("ALTER TABLE blocks ADD COLUMN encoding_type INTEGER DEFAULT 0;");
+    executeSql("ALTER TABLE blocks ADD COLUMN original_size INTEGER DEFAULT 0;");
+    executeSql("ALTER TABLE blocks ADD COLUMN compressed_size INTEGER DEFAULT 0;");
+
     // Create indexes for efficient queries
     executeSql("CREATE INDEX IF NOT EXISTS idx_blocks_tag ON blocks(tag_id);");
     executeSql("CREATE INDEX IF NOT EXISTS idx_blocks_time ON blocks(start_ts_us, end_ts_us);");
     executeSql("CREATE INDEX IF NOT EXISTS idx_blocks_tag_time ON blocks(tag_id, start_ts_us, end_ts_us);");
+    executeSql("CREATE INDEX IF NOT EXISTS idx_blocks_container ON blocks(container_id);");
+    executeSql("CREATE INDEX IF NOT EXISTS idx_blocks_archived ON blocks(is_archived, container_id);");
 
     return SyncResult::SUCCESS;
 }
@@ -461,6 +485,159 @@ SyncResult MetadataSync::deleteChunk(uint32_t container_id, uint32_t chunk_id) {
 
     if (rc != SQLITE_DONE) {
         setError("Block delete execution failed: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_EXEC_FAILED;
+    }
+
+    return SyncResult::SUCCESS;
+}
+
+// ============================================================================
+// Phase 18/19: COMPACT Archive Support
+// ============================================================================
+
+SyncResult MetadataSync::syncCompactBlock(uint32_t container_id,
+                                         uint32_t block_index,
+                                         uint32_t tag_id,
+                                         uint32_t original_chunk_id,
+                                         uint32_t original_block_index,
+                                         int64_t start_ts_us,
+                                         int64_t end_ts_us,
+                                         uint32_t record_count,
+                                         EncodingType original_encoding,
+                                         ValueType value_type,
+                                         TimeUnit time_unit,
+                                         uint32_t original_size,
+                                         uint32_t compressed_size) {
+    const char* sql = R"(
+        INSERT INTO blocks
+        (chunk_id, block_index, tag_id, start_ts_us, end_ts_us,
+         time_unit, value_type, record_count, chunk_offset,
+         container_id, is_archived, original_chunk_id, original_block_index,
+         encoding_type, original_size, compressed_size)
+        VALUES (0, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?, ?);
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare COMPACT block insert: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_PREPARE_FAILED;
+    }
+
+    // Bind parameters
+    sqlite3_bind_int(stmt, 1, block_index);
+    sqlite3_bind_int(stmt, 2, tag_id);
+    sqlite3_bind_int64(stmt, 3, start_ts_us);
+    sqlite3_bind_int64(stmt, 4, end_ts_us);
+    sqlite3_bind_int(stmt, 5, static_cast<int>(time_unit));
+    sqlite3_bind_int(stmt, 6, static_cast<int>(value_type));
+    sqlite3_bind_int(stmt, 7, record_count);
+    sqlite3_bind_int(stmt, 8, container_id);  // COMPACT container ID
+    sqlite3_bind_int(stmt, 9, original_chunk_id);
+    sqlite3_bind_int(stmt, 10, original_block_index);
+    sqlite3_bind_int(stmt, 11, static_cast<int>(original_encoding));
+    sqlite3_bind_int(stmt, 12, original_size);
+    sqlite3_bind_int(stmt, 13, compressed_size);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        setError("COMPACT block insert failed: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_EXEC_FAILED;
+    }
+
+    return SyncResult::SUCCESS;
+}
+
+SyncResult MetadataSync::markBlockAsArchived(uint32_t raw_container_id,
+                                            uint32_t chunk_id,
+                                            uint32_t block_index,
+                                            uint32_t archived_to_container_id,
+                                            uint32_t archived_to_block_index) {
+    const char* sql = R"(
+        UPDATE blocks
+        SET is_archived = 1,
+            archived_to_container_id = ?,
+            archived_to_block_index = ?
+        WHERE container_id = ? AND chunk_id = ? AND block_index = ?;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare archive mark: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_PREPARE_FAILED;
+    }
+
+    sqlite3_bind_int(stmt, 1, archived_to_container_id);
+    sqlite3_bind_int(stmt, 2, archived_to_block_index);
+    sqlite3_bind_int(stmt, 3, raw_container_id);
+    sqlite3_bind_int(stmt, 4, chunk_id);
+    sqlite3_bind_int(stmt, 5, block_index);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        setError("Archive mark failed: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_EXEC_FAILED;
+    }
+
+    return SyncResult::SUCCESS;
+}
+
+SyncResult MetadataSync::queryBlocksForArchive(uint32_t raw_container_id,
+                                              int64_t min_age_seconds,
+                                              std::vector<BlockQueryResult>& results) {
+    results.clear();
+
+    // Query blocks that are:
+    // 1. In RAW container
+    // 2. Not yet archived
+    // 3. Older than min_age_seconds
+    int64_t current_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    int64_t cutoff_time_us = current_time_us - (min_age_seconds * 1000000LL);
+
+    const char* sql = R"(
+        SELECT chunk_id, block_index, tag_id, start_ts_us, end_ts_us,
+               time_unit, value_type, record_count, chunk_offset
+        FROM blocks
+        WHERE container_id = ?
+          AND is_archived = 0
+          AND end_ts_us < ?
+        ORDER BY end_ts_us;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        setError("Failed to prepare archive query: " + std::string(sqlite3_errmsg(db_)));
+        return SyncResult::ERR_DB_PREPARE_FAILED;
+    }
+
+    sqlite3_bind_int(stmt, 1, raw_container_id);
+    sqlite3_bind_int64(stmt, 2, cutoff_time_us);
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        BlockQueryResult block;
+        block.chunk_id = sqlite3_column_int(stmt, 0);
+        block.block_index = sqlite3_column_int(stmt, 1);
+        block.tag_id = sqlite3_column_int(stmt, 2);
+        block.start_ts_us = sqlite3_column_int64(stmt, 3);
+        block.end_ts_us = sqlite3_column_int64(stmt, 4);
+        block.time_unit = static_cast<TimeUnit>(sqlite3_column_int(stmt, 5));
+        block.value_type = static_cast<ValueType>(sqlite3_column_int(stmt, 6));
+        block.record_count = sqlite3_column_int(stmt, 7);
+        block.chunk_offset = sqlite3_column_int64(stmt, 8);
+        results.push_back(block);
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        setError("Archive query failed: " + std::string(sqlite3_errmsg(db_)));
         return SyncResult::ERR_DB_EXEC_FAILED;
     }
 
